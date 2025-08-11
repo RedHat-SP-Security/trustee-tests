@@ -1,0 +1,22 @@
+description: |
+    Running all services on localhost.
+    Provide trustee basic attestation
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  -  trustee-guest-components
+test: ./runtest.sh
+framework: beakerlib
+tag:
+  - CI-Tier-1
+require:
+  - tss2 
+  - tss2-devel 
+  - tpm2-tss-devel 
+duration: 5m
+enabled: true
+/http:
+    environment:
+        HTTP_MODE: http
+/https:
+    environment:
+        HTTP_MODE: https

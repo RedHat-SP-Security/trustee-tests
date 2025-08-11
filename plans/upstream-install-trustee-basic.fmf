@@ -1,0 +1,11 @@
+summary:
+  Basic trustee attestation with upstream trustee
+
+discover:
+  how: fmf
+  test: 
+   - /setup/install_upstream_trustee
+   - /functional/kbs-basic-attestation
+
+execute:
+    how: tmt

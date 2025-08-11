@@ -1,0 +1,32 @@
+description: |
+    Running all services on localhost.
+    Provide trustee basic attestation.
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  -  trustee-guest-components
+test: ./runtest.sh
+framework: beakerlib
+tag:
+  - CI-Tier-1
+require:
+  - trustee-guest-components
+  - tss2 
+  - tss2-devel 
+  - tpm2-tss-devel 
+duration: 5m
+enabled: true
+/http:
+    environment:
+        HTTP_MODE: http
+/https:
+    environment:
+        HTTP_MODE: https
+/https_pqc_cert:
+    environment:
+        HTTP_MODE: https
+        CRYPTO_ALG: ML-DSA65
+    continue: false
+    adjust+:
+      - enabled: false
+        when: distro < rhel-10.1 or distro < fedora-43
+        because: PQC is available from this version of OS

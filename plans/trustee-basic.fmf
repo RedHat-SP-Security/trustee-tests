@@ -1,0 +1,14 @@
+summary:
+  Plan with basic trustee attestation
+
+environment:
+  TRUSTEE_RPM: "true"
+
+discover:
+  how: fmf
+  test: 
+   - /setup/install_upstream_trustee
+   - /functional/trustee-basic-attestation
+
+execute:
+    how: tmt

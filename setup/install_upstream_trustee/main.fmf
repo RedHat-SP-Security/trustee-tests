@@ -1,0 +1,22 @@
+summary: Install trustee upstream bits
+description: Downloads and installs trustee bits from upstream github repository.
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+- trustee-guest-components
+test: ./runtest.sh
+tag:
+ - setup
+framework: beakerlib
+require:
+ - trustee-guest-components
+ - clang 
+ - make 
+ - git
+ - protobuf 
+ - protobuf-compiler 
+ - perl-FindBin
+ - perl-IPC-Cmd
+ - perl-File-Compare
+ - perl-File-Copy
+duration: 10m
+enabled: true
