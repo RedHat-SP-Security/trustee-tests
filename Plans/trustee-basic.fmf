@@ -7,8 +7,8 @@ environment:
 discover:
   how: fmf
   test: 
-   - /setup/install_upstream_trustee
-   - /functional/trustee-basic-attestation
+   - /Setup/install_upstream_trustee
+   - /Functional/trustee-basic-attestation
 
 execute:
     how: tmt
