@@ -316,7 +316,8 @@ cat > "${script_path}" <<-EOF
 		echo "--> Attesting to KBS to get resource token using /usr/local/bin/kbs-client..."
 		/usr/local/bin/kbs-client --url "${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}" ${HTTPS_CERTS} attest ${tee_key_arg} > /tmp/attestation_token
 		echo "--> Using token to get LUKS key from KBS using ${get_resource_tool}..."
-		${get_resource_tool} --url "${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}" ${HTTPS_CERTS} get-resource --path default/test/luks-key | base64 -d > /tmp/luks-key
+		#${get_resource_tool}
+        trustee-attester --url "${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}" ${HTTPS_CERTS} get-resource --path default/test/luks-key | base64 -d > /tmp/luks-key
 		echo "--> Unlocking and mounting LUKS disk..."
 		cryptsetup luksOpen \$disk luks-disk --key-file /tmp/luks-key
 		echo "--> Cleaning up temporary key files..."
