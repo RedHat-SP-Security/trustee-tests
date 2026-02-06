@@ -1,0 +1,37 @@
+description: |
+    Minimal functional test for clevis-pin-trustee.
+    Tests the full clevis encrypt/decrypt round-trip using KBS
+    with mock attestation (sample attester on non-TEE hardware).
+
+    Flow:
+      clevis encrypt trustee -> trustee-attester (sample attester)
+        -> KBS RCAR attestation (allow_all policy) -> fetch key -> JWE encrypt
+      clevis decrypt -> trustee-attester -> KBS -> fetch key -> JWE decrypt
+
+    KBS runs in a container (ghcr.io/confidential-containers/staged-images/kbs)
+    because the RPM binary lacks the coco-as-builtin feature needed for RCAR.
+    Does not require a confidential VM or real TEE hardware.
+
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  - clevis-pin-trustee
+test: ./runtest.sh
+framework: beakerlib
+tag:
+  - CI-Tier-1
+require:
+  - clevis
+  - clevis-pin-trustee
+  - trustee-guest-components
+  - podman
+  - jq
+  - openssl
+duration: 5m
+enabled: true
+
+/http:
+    environment:
+        HTTP_MODE: http
+/https:
+    environment:
+        HTTP_MODE: https
