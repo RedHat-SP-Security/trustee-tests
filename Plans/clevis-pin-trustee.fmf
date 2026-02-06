@@ -1,18 +1,17 @@
 summary:
-  Test clevis-pin-trustee with upstream KBS and mock attestation
+  Test clevis-pin-trustee with KBS and mock attestation
 
 description: |
-  This test validates clevis-pin-trustee functionality using:
-  - Software TPM (swtpm) for TPM emulation
-  - Upstream KBS built from source
-  - Mock attestation with permissive policies
+  Tests clevis encrypt/decrypt round-trip with:
+  - KBS in container (coco-as-builtin, insecure_key, allow_all.rego)
+  - Sample attester fallback on non-TEE hardware
+  - allow_all.rego policy to accept sample attestation evidence
 
-  Can run on non-confidential VMs for CI/CD testing.
+  Does not require a confidential VM or real TEE hardware.
 
 discover:
   how: fmf
   test:
-    - /Setup/install_upstream_trustee
     - /Functional/clevis-pin-trustee-basic-attestation
 
 execute:

@@ -12,7 +12,7 @@ description: |
     because the RPM binary lacks the coco-as-builtin feature needed for RCAR.
     Does not require a confidential VM or real TEE hardware.
 
-contact: Patrik Koncity <pkoncity@redhat.com>
+contact: Adam Prikryl <aprikryl@redhat.com>
 component:
   - clevis-pin-trustee
 test: ./runtest.sh
