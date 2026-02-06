@@ -1,0 +1,34 @@
+summary: KBS resource retrieval with pre-signed JWT token
+description: |
+    Tests KBS package with external JWT token validation using a
+    pre-signed static token.
+
+    Note: The RHEL KBS package is built as "pure broker" mode without
+    built-in attestation service. It accepts tokens from external
+    attestation services like Keylime.
+
+    Test flow:
+      1. Start KBS with insecure token validation mode
+      2. Pre-populate secret in LocalFs repository
+      3. Access resource using pre-signed JWT token
+      4. Decrypt JWE response and verify secret matches
+      5. Verify access without token is rejected (HTTP 401)
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  - trustee-kbs
+test: ./runtest.sh
+framework: beakerlib
+require:
+  - trustee-kbs
+  - openssl
+  - curl
+  - jq
+  - python3-cryptography
+duration: 5m
+enabled: true
+/http:
+    environment:
+        HTTP_MODE: http
+/https:
+    environment:
+        HTTP_MODE: https
