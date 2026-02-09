@@ -82,6 +82,9 @@ rlJournalStart
     rlPhaseStartSetup "Configure and start KBS for mock attestation"
         rlRun 'rlImport "./test-helpers"' || rlDie "cannot import trustee-tests/test-helpers library"
 
+        # Create a test-local temporary directory
+        rlRun "TMP_DIR=\$(mktemp -d)" 0 "Create test temporary directory"
+
         # Check prerequisites
         rlAssertRpm clevis
         rlAssertRpm clevis-pin-trustee
@@ -107,62 +110,28 @@ rlJournalStart
 
         # 1. KBS resource access policy (allow_all)
         rlRun "mkdir -p ${KBS_POLICY_DIR}" 0 "Create KBS policy directory"
-        cat > "${KBS_POLICY_DIR}/policy.rego" << 'POLICYEOF'
-package policy
-
-default allow = true
-POLICYEOF
+        rlRun "printf '%s\n' 'package policy' '' 'default allow = true' > '${KBS_POLICY_DIR}/policy.rego'" \
+            0 "Write KBS resource access policy"
         rlAssertExists "${KBS_POLICY_DIR}/policy.rego" "KBS resource policy file"
 
         # 2. Attestation service policy (allow_all for sample attester evidence)
         rlRun "mkdir -p ${AS_WORK_DIR}/opa" 0 "Create AS OPA policy directory"
-        cat > "${AS_WORK_DIR}/opa/default.rego" << 'ASPOLICYEOF'
-package policy
-
-default allow = true
-ASPOLICYEOF
+        rlRun "printf '%s\n' 'package policy' '' 'default allow = true' > '${AS_WORK_DIR}/opa/default.rego'" \
+            0 "Write AS attestation policy"
         rlAssertExists "${AS_WORK_DIR}/opa/default.rego" "AS attestation policy file"
 
         # 3. Test key resource in KBS repository
         RESOURCE_FILE="${KBS_REPO_DIR}/${TEST_KEY_PATH}"
         RESOURCE_DIR=$(dirname "${RESOURCE_FILE}")
         rlRun "mkdir -p ${RESOURCE_DIR}" 0 "Create resource directory"
-        echo -n "${TEST_KEY_JSON}" > "${RESOURCE_FILE}"
+        rlRun "echo -n '${TEST_KEY_JSON}' > '${RESOURCE_FILE}'" 0 "Write test key resource"
         rlAssertExists "${RESOURCE_FILE}" "Test key resource file"
 
         # ---- Start KBS in container ----
         # The RPM binary (trustee-kbs) lacks the coco-as-builtin feature,
         # so RCAR attestation (POST /kbs/v0/auth) fails with PluginNotFound.
         # The container image is built with coco-as-builtin support.
-        rlRun "podman pull ${KBS_IMAGE}" 0 "Pull KBS container image"
-
-        # Build volume mount list
-        PODMAN_VOLUMES="-v $(pwd)/config/kbs-config.toml:$(pwd)/config/kbs-config.toml:Z"
-        PODMAN_VOLUMES+=" -v ${KBS_REPO_DIR}:${KBS_REPO_DIR}:Z"
-        PODMAN_VOLUMES+=" -v ${KBS_POLICY_DIR}:${KBS_POLICY_DIR}:Z"
-        PODMAN_VOLUMES+=" -v ${AS_WORK_DIR}:${AS_WORK_DIR}:Z"
-        if [[ "$HTTP_MODE" == "https" ]]; then
-            PODMAN_VOLUMES+=" -v $(pwd)/HttpsCerts:$(pwd)/HttpsCerts:Z"
-        fi
-
-        rlRun "podman run -d --replace --name ${KBS_CONTAINER} --network host \
-            ${PODMAN_VOLUMES} \
-            ${KBS_IMAGE} \
-            /usr/local/bin/kbs --config-file $(pwd)/config/kbs-config.toml" \
-            0 "Start KBS container"
-
-        rlRun "sleep 4" 0 "Wait for KBS to initialize"
-
-        # Verify the container is running
-        if ! podman ps --filter "name=${KBS_CONTAINER}" --filter "status=running" --format '{{.Names}}' | grep -q "${KBS_CONTAINER}"; then
-            rlFail "KBS container is not running"
-            rlLog "=== KBS container log ==="
-            podman logs "${KBS_CONTAINER}" 2>&1
-            rlDie "KBS failed to start"
-        fi
-        rlPass "KBS container is running"
-        rlLog "=== KBS startup log ==="
-        podman logs "${KBS_CONTAINER}" 2>&1 | head -10
+        trusteeStartKbsContainer "${KBS_CONTAINER}" "${KBS_IMAGE}"
     rlPhaseEnd
 
     # ==================================================================
@@ -183,67 +152,24 @@ ASPOLICYEOF
         rlLog "Clevis trustee config: ${CLEVIS_CONFIG}"
 
         # Encrypt
-        rlLog "Encrypting test plaintext with clevis pin trustee..."
-        echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG}" \
-            > "${__INTERNAL_trusteeTmpDir}/encrypted.jwe" \
-            2> "${__INTERNAL_trusteeTmpDir}/encrypt.log"
-        ENCRYPT_RC=$?
+        rlRun 'echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG}" > "${TMP_DIR}/encrypted.jwe" 2> "${TMP_DIR}/encrypt.log"' 0 "clevis encrypt trustee"
 
-        if [[ ${ENCRYPT_RC} -ne 0 ]]; then
-            rlFail "clevis encrypt trustee failed (exit code ${ENCRYPT_RC})"
-            rlLog "=== clevis encrypt stderr ==="
-            cat "${__INTERNAL_trusteeTmpDir}/encrypt.log"
-            rlLog "=== KBS log (last 50 lines) ==="
-            podman logs "${KBS_CONTAINER}" 2>&1 | tail -50
-        else
-            rlPass "clevis encrypt trustee succeeded"
-            JWE_SIZE=$(wc -c < "${__INTERNAL_trusteeTmpDir}/encrypted.jwe")
-            rlLog "Encrypted JWE size: ${JWE_SIZE} bytes"
+        # Decrypt
+        rlRun 'clevis decrypt < "${TMP_DIR}/encrypted.jwe" > "${TMP_DIR}/decrypted.txt" 2> "${TMP_DIR}/decrypt.log"' 0 "clevis decrypt"
 
-            # Decrypt
-            rlLog "Decrypting with clevis decrypt..."
-            DECRYPTED=$(clevis decrypt \
-                < "${__INTERNAL_trusteeTmpDir}/encrypted.jwe" \
-                2> "${__INTERNAL_trusteeTmpDir}/decrypt.log")
-            DECRYPT_RC=$?
-
-            if [[ ${DECRYPT_RC} -ne 0 ]]; then
-                rlFail "clevis decrypt failed (exit code ${DECRYPT_RC})"
-                rlLog "=== clevis decrypt stderr ==="
-                cat "${__INTERNAL_trusteeTmpDir}/decrypt.log"
-                rlLog "=== KBS log (last 50 lines) ==="
-                podman logs "${KBS_CONTAINER}" 2>&1 | tail -50
-            else
-                rlLog "Decrypted: '${DECRYPTED}'"
-                rlLog "Expected:  '${TEST_PLAINTEXT}'"
-                if [[ "${DECRYPTED}" == "${TEST_PLAINTEXT}" ]]; then
-                    rlPass "Round-trip successful: decrypted plaintext matches original"
-                else
-                    rlFail "Plaintext mismatch: got '${DECRYPTED}', expected '${TEST_PLAINTEXT}'"
-                fi
-            fi
-        fi
+        DECRYPTED=$(<"${TMP_DIR}/decrypted.txt")
+        rlAssertEquals "Decrypted plaintext matches original" "${DECRYPTED}" "${TEST_PLAINTEXT}"
     rlPhaseEnd
 
     # ==================================================================
     #   TEST 2: clevis decrypt must fail when KBS is unreachable
     # ==================================================================
     rlPhaseStartTest "clevis decrypt fails when KBS is stopped"
-        if [[ -s "${__INTERNAL_trusteeTmpDir}/encrypted.jwe" ]]; then
+        if [[ -s "${TMP_DIR}/encrypted.jwe" ]]; then
             # Stop KBS container
             rlRun "podman stop ${KBS_CONTAINER}" 0 "Stop KBS container"
 
-            clevis decrypt \
-                < "${__INTERNAL_trusteeTmpDir}/encrypted.jwe" \
-                > /dev/null \
-                2> "${__INTERNAL_trusteeTmpDir}/decrypt_noserver.log"
-            DECRYPT_RC=$?
-
-            if [[ ${DECRYPT_RC} -ne 0 ]]; then
-                rlPass "clevis decrypt correctly failed without KBS (exit code ${DECRYPT_RC})"
-            else
-                rlFail "clevis decrypt should have failed without running KBS"
-            fi
+            rlRun 'clevis decrypt < "${TMP_DIR}/encrypted.jwe" > /dev/null 2> "${TMP_DIR}/decrypt_noserver.log"' 1-255 "clevis decrypt fails without KBS"
 
             # Restart KBS container for cleanup phase
             rlRun "podman start ${KBS_CONTAINER}" 0 "Restart KBS container"
@@ -260,16 +186,12 @@ ASPOLICYEOF
         # Show KBS log on test failure
         if ! rlGetTestState; then
             rlLog "=== KBS Container Log (showing due to test failure) ==="
-            podman logs "${KBS_CONTAINER}" 2>&1
+            rlRun "podman logs ${KBS_CONTAINER}" 0,1 "Show KBS container log"
         fi
 
-        rlRun "podman stop ${KBS_CONTAINER} 2>/dev/null || true" 0,1 "Stop KBS container"
-        rlRun "podman rm -f ${KBS_CONTAINER} 2>/dev/null || true" 0,1 "Remove KBS container"
+        trusteeStopKbsContainer "${KBS_CONTAINER}"
 
-        rlRun "rm -f ${__INTERNAL_trusteeTmpDir}/encrypted.jwe"
-        rlRun "rm -f ${__INTERNAL_trusteeTmpDir}/encrypt.log"
-        rlRun "rm -f ${__INTERNAL_trusteeTmpDir}/decrypt.log"
-        rlRun "rm -f ${__INTERNAL_trusteeTmpDir}/decrypt_noserver.log"
+        rlRun "rm -rf ${TMP_DIR}" 0 "Remove test temporary directory"
         rlRun "rm -rf AdminKeys"
         rlRun "rm -rf TeeKeys"
         rlRun "rm -rf config"
