@@ -1,0 +1,10 @@
+summary:
+  Plan with basic kbs test
+
+discover:
+  how: fmf
+  test: 
+   - /Functional/kbs-fake-token-get-resource
+
+execute:
+    how: tmt
