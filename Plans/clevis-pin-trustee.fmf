@@ -1,0 +1,18 @@
+summary:
+  Test clevis-pin-trustee with KBS and mock attestation
+
+description: |
+  Tests clevis encrypt/decrypt round-trip with:
+  - KBS in container (coco-as-builtin, insecure_key, allow_all.rego)
+  - Sample attester fallback on non-TEE hardware
+  - allow_all.rego policy to accept sample attestation evidence
+
+  Does not require a confidential VM or real TEE hardware.
+
+discover:
+  how: fmf
+  test:
+    - /Functional/clevis-pin-trustee-basic-attestation
+
+execute:
+  how: tmt
