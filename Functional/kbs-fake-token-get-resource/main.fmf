@@ -18,6 +18,8 @@ component:
   - trustee-kbs
 test: ./runtest.sh
 framework: beakerlib
+tag:
+  - CI-Tier-1
 require:
   - trustee-kbs
   - openssl
