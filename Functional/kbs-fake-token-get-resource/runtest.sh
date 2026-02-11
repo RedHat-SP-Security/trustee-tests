@@ -36,6 +36,13 @@
 # Should be set in main.fmf
 HTTP_MODE="${HTTP_MODE:-http}"
 
+# Curl options for HTTPS (skip cert verification for self-signed)
+if [[ "$HTTP_MODE" == "https" ]]; then
+    CURL_OPTS="-k"
+else
+    CURL_OPTS=""
+fi
+
 # Server settings
 SERVER_IP="127.0.0.1"
 KBS_PORT="8080"
@@ -151,6 +158,7 @@ PYEOF
 rlJournalStart
 
     rlPhaseStartSetup "Configure and start KBS"
+        rlRun 'rlImport "./test-helpers"' || rlDie "cannot import trustee-tests/test-helpers library"
         rlAssertRpm trustee-kbs
 
         # Create directories
@@ -163,26 +171,7 @@ rlJournalStart
 
         # Generate HTTPS certs if needed
         if [[ "$HTTP_MODE" == "https" ]]; then
-            rlRun "mkdir -p HttpsCerts"
-            cat > HttpsCerts/host.conf << EOF
-[req]
-distinguished_name = req_distinguished_name
-x509_extensions = v3_ca
-prompt = no
-
-[req_distinguished_name]
-CN = localhost
-
-[v3_ca]
-subjectAltName = @alt_names
-
-[alt_names]
-DNS.1 = localhost
-IP.1 = 127.0.0.1
-EOF
-            rlRun "openssl req -x509 -nodes -days 365 -newkey rsa:2048 \
-                -keyout HttpsCerts/host.key -out HttpsCerts/host.crt \
-                -config HttpsCerts/host.conf"
+            trusteeGenerateHTTPCerts
             HTTP_SERVER_CONFIG="insecure_http = false
 sockets = [\"${SERVER_IP}:${KBS_PORT}\"]
 private_key = \"${PWD}/HttpsCerts/host.key\"
@@ -251,7 +240,7 @@ EOF
 
     rlPhaseStartTest "Access resource with pre-signed JWT token"
         rlLog "Using static pre-signed token (${#STATIC_TOKEN} chars)"
-        rlRun -s "curl -s -w '\nHTTP_CODE:%{http_code}' \
+        rlRun -s "curl -s ${CURL_OPTS} -w '\nHTTP_CODE:%{http_code}' \
             -H 'Authorization: Bearer ${STATIC_TOKEN}' \
             ${HTTP_MODE}://localhost:${KBS_PORT}/kbs/v0/resource/default/keys/test-secret" 0 "Access resource with token"
 
@@ -273,7 +262,7 @@ EOF
     rlPhaseEnd
 
     rlPhaseStartTest "Access resource without token (should fail)"
-        rlRun -s "curl -s -w '\nHTTP_CODE:%{http_code}' \
+        rlRun -s "curl -s ${CURL_OPTS} -w '\nHTTP_CODE:%{http_code}' \
             ${HTTP_MODE}://localhost:${KBS_PORT}/kbs/v0/resource/default/keys/test-secret" 0 "Access without token"
 
         HTTP_CODE=$(tail -1 $rlRun_LOG | grep -o '[0-9]*')
