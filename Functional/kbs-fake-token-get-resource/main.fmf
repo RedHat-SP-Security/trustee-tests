@@ -20,6 +20,7 @@ test: ./runtest.sh
 framework: beakerlib
 tag:
   - CI-Tier-1
+  - CI-Tier-1-kbs
 require:
   - trustee-kbs
   - openssl
