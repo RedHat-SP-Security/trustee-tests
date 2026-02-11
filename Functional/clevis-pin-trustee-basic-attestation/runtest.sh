@@ -132,7 +132,7 @@ rlJournalStart
         rlRun "echo -n '${TEST_KEY_JSON}' > '${RESOURCE_FILE}'" 0 "Write test key resource"
         rlAssertExists "${RESOURCE_FILE}" "Test key resource file"
 
-        # 4. Restricted key resource (stored but denied by restrictive policy in Test 3)
+        # 4. Restricted key resource (stored but denied by restrictive policy in Test 2)
         RESTRICTED_FILE="${KBS_REPO_DIR}/${RESTRICTED_KEY_PATH}"
         rlRun "echo -n '${RESTRICTED_KEY_JSON}' > '${RESTRICTED_FILE}'" 0 "Write restricted key resource"
         rlAssertExists "${RESTRICTED_FILE}" "Restricted key resource file"
@@ -166,37 +166,14 @@ rlJournalStart
     rlPhaseEnd
 
     # ==================================================================
-    #   TEST 2: clevis decrypt must fail when KBS is unreachable
-    # ==================================================================
-    rlPhaseStartTest "clevis decrypt fails when KBS is stopped"
-        if [[ -s "${TMP_DIR}/encrypted.jwe" ]]; then
-            # Stop KBS container
-            rlRun "podman stop ${KBS_CONTAINER}" 0 "Stop KBS container"
-
-            rlRun 'clevis decrypt < "${TMP_DIR}/encrypted.jwe" > /dev/null 2> "${TMP_DIR}/decrypt_noserver.log"' 1-255 "clevis decrypt fails without KBS"
-
-            # Restart KBS container for another phase phase
-            rlRun "podman start ${KBS_CONTAINER}" 0 "Restart KBS container"
-            rlRun "sleep 2"
-        else
-            rlLog "Skipping: no encrypted blob from Test 1"
-        fi
-    rlPhaseEnd
-
-    # ==================================================================
-    #   TEST 3: restrictive resource policy
+    #   TEST 2: restrictive resource policy
     # ==================================================================
     rlPhaseStartTest "Restrictive policy allows only authorized key"
-        # Stop KBS, swap resource policy to restrictive, restart
-        rlRun "podman stop ${KBS_CONTAINER}" 0 "Stop KBS container for policy swap"
-
-        # Restrictive policy: only allow access to clevis-test-key
+        # Overwrite resource policy with a restrictive one (no container restart).
+        # KBS re-evaluates OPA policy from disk on each resource request.
         # In KBS v0.13.0, the resource path is in data["resource-path"]
         rlRun "printf '%s\n' 'package policy' '' 'default allow = false' '' 'allow {' '    endswith(data[\"resource-path\"], \"default/keys/clevis-test-key\")' '}' > '${KBS_POLICY_DIR}/policy.rego'" \
             0 "Write restrictive resource policy"
-
-        rlRun "podman start ${KBS_CONTAINER}" 0 "Restart KBS with restrictive policy"
-        rlRun "sleep 4" 0 "Wait for KBS to initialize"
 
         # Encrypt/decrypt with allowed key should succeed
         CLEVIS_CONFIG_ALLOWED="{\"servers\":[{\"url\":\"${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}\",\"cert\":\"${CERT_VALUE}\"}],\"path\":\"${TEST_KEY_PATH}\"}"
@@ -208,6 +185,20 @@ rlJournalStart
         # Encrypt with restricted key should fail (policy denies access)
         CLEVIS_CONFIG_RESTRICTED="{\"servers\":[{\"url\":\"${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}\",\"cert\":\"${CERT_VALUE}\"}],\"path\":\"${RESTRICTED_KEY_PATH}\"}"
         rlRun 'echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG_RESTRICTED}" > "${TMP_DIR}/encrypted_restricted.jwe" 2> "${TMP_DIR}/encrypt_restricted.log"' 1-255 "clevis encrypt with restricted key denied by policy"
+    rlPhaseEnd
+
+    # ==================================================================
+    #   TEST 3: clevis decrypt must fail when KBS is unreachable
+    # ==================================================================
+    rlPhaseStartTest "clevis decrypt fails when KBS is stopped"
+        if [[ -s "${TMP_DIR}/encrypted.jwe" ]]; then
+            # Stop KBS container (stays stopped through cleanup)
+            rlRun "podman stop ${KBS_CONTAINER}" 0 "Stop KBS container"
+
+            rlRun 'clevis decrypt < "${TMP_DIR}/encrypted.jwe" > /dev/null 2> "${TMP_DIR}/decrypt_noserver.log"' 1-255 "clevis decrypt fails without KBS"
+        else
+            rlLog "Skipping: no encrypted blob from Test 1"
+        fi
     rlPhaseEnd
 
     # ==================================================================
