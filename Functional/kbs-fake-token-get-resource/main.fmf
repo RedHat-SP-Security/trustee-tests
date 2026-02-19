@@ -18,6 +18,7 @@ component:
   - trustee-kbs
 test: ./runtest.sh
 framework: beakerlib
+tier: '1'
 tag:
   - CI-Tier-1
   - CI-Tier-1-kbs
