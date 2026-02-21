@@ -62,6 +62,8 @@ HTTP_MODE="${HTTP_MODE:-http}"
 # Test key in the format clevis-pin-trustee expects.
 TEST_KEY_JSON='{"key_type":"oct","key":"2b442dd5db4478367729ef8bbf2e7480"}'
 TEST_KEY_PATH="default/keys/clevis-test-key"
+RESTRICTED_KEY_JSON='{"key_type":"oct","key":"9a3f7c1e5b824d6f0a1e3c5b7d9f2a4c"}'
+RESTRICTED_KEY_PATH="default/keys/restricted-key"
 TEST_PLAINTEXT="Hello from clevis-pin-trustee minimal test"
 
 # KBS filesystem paths (must match kbs-config.toml created by trusteeCreateKbsConfig)
@@ -95,6 +97,9 @@ rlJournalStart
         if [[ "$HTTP_MODE" == "https" ]]; then
             HTTPS_CERTS="--cert-file ${PWD}/HttpsCerts/host.crt"
             trusteeGenerateHTTPCerts
+            CERT_VALUE=$(awk '{printf "%s\\n", $0}' "${PWD}/HttpsCerts/host.crt")
+        else
+            CERT_VALUE=""
         fi
 
         # Generate admin keys (Ed25519, for KBS admin API authentication)
@@ -120,12 +125,17 @@ rlJournalStart
             0 "Write AS attestation policy"
         rlAssertExists "${AS_WORK_DIR}/opa/default.rego" "AS attestation policy file"
 
-        # 3. Test key resource in KBS repository
+        # 3. Test key resources in KBS repository
         RESOURCE_FILE="${KBS_REPO_DIR}/${TEST_KEY_PATH}"
         RESOURCE_DIR=$(dirname "${RESOURCE_FILE}")
         rlRun "mkdir -p ${RESOURCE_DIR}" 0 "Create resource directory"
         rlRun "echo -n '${TEST_KEY_JSON}' > '${RESOURCE_FILE}'" 0 "Write test key resource"
         rlAssertExists "${RESOURCE_FILE}" "Test key resource file"
+
+        # 4. Restricted key resource (stored but denied by restrictive policy in Test 2)
+        RESTRICTED_FILE="${KBS_REPO_DIR}/${RESTRICTED_KEY_PATH}"
+        rlRun "echo -n '${RESTRICTED_KEY_JSON}' > '${RESTRICTED_FILE}'" 0 "Write restricted key resource"
+        rlAssertExists "${RESTRICTED_FILE}" "Restricted key resource file"
 
         # ---- Start KBS in container ----
         # The RPM binary (trustee-kbs) lacks the coco-as-builtin feature,
@@ -142,12 +152,6 @@ rlJournalStart
         # The "cert" field must contain the PEM certificate CONTENT, not a file path.
         # clevis-pin-trustee writes this value to a temp file and passes it to
         # trustee-attester --cert-file.
-        if [[ "$HTTP_MODE" == "https" ]]; then
-            CERT_VALUE=$(awk '{printf "%s\\n", $0}' "${PWD}/HttpsCerts/host.crt")
-        else
-            CERT_VALUE=""
-        fi
-
         CLEVIS_CONFIG="{\"servers\":[{\"url\":\"${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}\",\"cert\":\"${CERT_VALUE}\"}],\"path\":\"${TEST_KEY_PATH}\"}"
         rlLog "Clevis trustee config: ${CLEVIS_CONFIG}"
 
@@ -162,18 +166,36 @@ rlJournalStart
     rlPhaseEnd
 
     # ==================================================================
-    #   TEST 2: clevis decrypt must fail when KBS is unreachable
+    #   TEST 2: restrictive resource policy
+    # ==================================================================
+    rlPhaseStartTest "Restrictive policy allows only authorized key"
+        # Overwrite resource policy with a restrictive one (no container restart).
+        # KBS re-evaluates OPA policy from disk on each resource request.
+        # In KBS v0.13.0, the resource path is in data["resource-path"]
+        rlRun "printf '%s\n' 'package policy' '' 'default allow = false' '' 'allow {' '    endswith(data[\"resource-path\"], \"default/keys/clevis-test-key\")' '}' > '${KBS_POLICY_DIR}/policy.rego'" \
+            0 "Write restrictive resource policy"
+
+        # Encrypt/decrypt with allowed key should succeed
+        CLEVIS_CONFIG_ALLOWED="{\"servers\":[{\"url\":\"${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}\",\"cert\":\"${CERT_VALUE}\"}],\"path\":\"${TEST_KEY_PATH}\"}"
+        rlRun 'echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG_ALLOWED}" > "${TMP_DIR}/encrypted_allowed.jwe" 2> "${TMP_DIR}/encrypt_allowed.log"' 0 "clevis encrypt with allowed key succeeds"
+        rlRun 'clevis decrypt < "${TMP_DIR}/encrypted_allowed.jwe" > "${TMP_DIR}/decrypted_allowed.txt" 2> "${TMP_DIR}/decrypt_allowed.log"' 0 "clevis decrypt with allowed key succeeds"
+        DECRYPTED_ALLOWED=$(<"${TMP_DIR}/decrypted_allowed.txt")
+        rlAssertEquals "Decrypted plaintext matches original (restrictive policy)" "${DECRYPTED_ALLOWED}" "${TEST_PLAINTEXT}"
+
+        # Encrypt with restricted key should fail (policy denies access)
+        CLEVIS_CONFIG_RESTRICTED="{\"servers\":[{\"url\":\"${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}\",\"cert\":\"${CERT_VALUE}\"}],\"path\":\"${RESTRICTED_KEY_PATH}\"}"
+        rlRun 'echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG_RESTRICTED}" > "${TMP_DIR}/encrypted_restricted.jwe" 2> "${TMP_DIR}/encrypt_restricted.log"' 1-255 "clevis encrypt with restricted key denied by policy"
+    rlPhaseEnd
+
+    # ==================================================================
+    #   TEST 3: clevis decrypt must fail when KBS is unreachable
     # ==================================================================
     rlPhaseStartTest "clevis decrypt fails when KBS is stopped"
         if [[ -s "${TMP_DIR}/encrypted.jwe" ]]; then
-            # Stop KBS container
+            # Stop KBS container (stays stopped through cleanup)
             rlRun "podman stop ${KBS_CONTAINER}" 0 "Stop KBS container"
 
             rlRun 'clevis decrypt < "${TMP_DIR}/encrypted.jwe" > /dev/null 2> "${TMP_DIR}/decrypt_noserver.log"' 1-255 "clevis decrypt fails without KBS"
-
-            # Restart KBS container for cleanup phase
-            rlRun "podman start ${KBS_CONTAINER}" 0 "Restart KBS container"
-            rlRun "sleep 2"
         else
             rlLog "Skipping: no encrypted blob from Test 1"
         fi
@@ -199,6 +221,7 @@ rlJournalStart
         rlRun "rm -f ${KBS_POLICY_DIR}/policy.rego"
         rlRun "rm -f ${AS_WORK_DIR}/opa/default.rego"
         rlRun "rm -f ${KBS_REPO_DIR}/${TEST_KEY_PATH}"
+        rlRun "rm -f ${KBS_REPO_DIR}/${RESTRICTED_KEY_PATH}"
         if [[ "$HTTP_MODE" == "https" ]]; then
             rlRun "rm -rf HttpsCerts"
         fi
