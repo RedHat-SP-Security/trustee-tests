@@ -5,6 +5,7 @@ discover:
   how: fmf
   test: 
    - /Functional/kbs-fake-token-get-resource
+   - /Functional/clevis-pin-trustee-basic-attestation
 
 execute:
     how: tmt
