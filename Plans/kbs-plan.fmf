@@ -1,11 +1,16 @@
-summary:
-  Plan with basic kbs test
+summary: Plan with basic kbs test
 
 discover:
   how: fmf
   test: 
-   - /Functional/kbs-fake-token-get-resource
    - /Functional/clevis-pin-trustee-basic-attestation
 
 execute:
-    how: tmt
+  how: tmt
+
+adjust:
+  - when: distro >= rhel-10
+    discover:
+      how: fmf
+      test: 
+         - /Functional/kbs-fake-token-get-resource
