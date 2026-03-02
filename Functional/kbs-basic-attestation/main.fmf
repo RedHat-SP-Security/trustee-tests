@@ -20,3 +20,8 @@ enabled: true
 /https:
     environment:
         HTTP_MODE: https
+
+adjust+:
+  - enabled: false
+    when: arch != x86_64
+    continue: false
