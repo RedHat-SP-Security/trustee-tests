@@ -19,6 +19,8 @@ test: ./runtest.sh
 framework: beakerlib
 tag:
   - CI-Tier-1
+  - Tier1
+tier: '1'
 require:
   - clevis
   - clevis-pin-trustee
