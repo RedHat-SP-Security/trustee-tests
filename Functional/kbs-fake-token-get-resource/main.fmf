@@ -36,3 +36,8 @@ enabled: true
 /https:
     environment:
         HTTP_MODE: https
+
+adjust+:
+  - enabled: false
+    when: distro <= rhel-9
+    continue: false
