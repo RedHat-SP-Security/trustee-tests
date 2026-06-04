@@ -1,13 +1,20 @@
 summary:
-  Test clevis-pin-trustee with KBS and mock attestation
+  Test clevis-pin-trustee with KBS on a confidential VM
 
 description: |
+  Sanity test for trustee on a confidential VM (AMD SEV-SNP).
   Tests clevis encrypt/decrypt round-trip with:
   - KBS in container (coco-as-builtin, insecure_key, allow_all.rego)
-  - Sample attester fallback on non-TEE hardware
-  - allow_all.rego policy to accept sample attestation evidence
+  - Real TEE attestation via trustee-attester (auto-detects SNP)
+  - allow_all.rego policy to accept attestation evidence
 
-  Does not require a confidential VM or real TEE hardware.
+  Works around missing AS/RVPS RPMs by using the container KBS
+  image which has built-in attestation service support.
+
+provision:
+  hardware:
+    virtualization:
+      confidential: true
 
 discover:
   how: fmf
