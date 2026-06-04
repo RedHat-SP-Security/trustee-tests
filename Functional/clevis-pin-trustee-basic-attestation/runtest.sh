@@ -135,6 +135,22 @@ rlJournalStart
     rlPhaseEnd
 
     # ==================================================================
+    #   DIAGNOSTICS: log TEE environment for debugging attestation
+    # ==================================================================
+    rlPhaseStartTest "Log TEE environment"
+        rlLog "=== SEV devices ==="
+        ls -la /dev/sev* 2>&1 | while read line; do rlLog "$line"; done
+        rlLog "=== SEV kernel modules ==="
+        lsmod | grep -i sev | while read line; do rlLog "$line"; done
+        rlLog "=== dmesg SEV/confidential ==="
+        dmesg | grep -iE 'sev|confidential' | tail -10 | while read line; do rlLog "$line"; done
+        rlLog "=== trustee-attester version ==="
+        trustee-attester --version 2>&1 | while read line; do rlLog "$line"; done
+        rlLog "=== Quick attestation test ==="
+        trustee-attester --url http://localhost:8080 get-resource --path default/keys/clevis-test-key 2>&1 | while read line; do rlLog "$line"; done
+    rlPhaseEnd
+
+    # ==================================================================
     #   TEST 1: clevis encrypt + decrypt round-trip
     # ==================================================================
     rlPhaseStartTest "clevis encrypt/decrypt round-trip with trustee pin"
@@ -153,9 +169,19 @@ rlJournalStart
 
         # Encrypt
         rlRun 'echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG}" > "${TMP_DIR}/encrypted.jwe" 2> "${TMP_DIR}/encrypt.log"' 0 "clevis encrypt trustee"
+        if [[ -s "${TMP_DIR}/encrypt.log" ]]; then
+            rlLog "=== clevis encrypt stderr ==="
+            rlLog "$(cat "${TMP_DIR}/encrypt.log")"
+            rlLog "=== end encrypt stderr ==="
+        fi
 
         # Decrypt
         rlRun 'clevis decrypt < "${TMP_DIR}/encrypted.jwe" > "${TMP_DIR}/decrypted.txt" 2> "${TMP_DIR}/decrypt.log"' 0 "clevis decrypt"
+        if [[ -s "${TMP_DIR}/decrypt.log" ]]; then
+            rlLog "=== clevis decrypt stderr ==="
+            rlLog "$(cat "${TMP_DIR}/decrypt.log")"
+            rlLog "=== end decrypt stderr ==="
+        fi
 
         DECRYPTED=$(<"${TMP_DIR}/decrypted.txt")
         rlAssertEquals "Decrypted plaintext matches original" "${DECRYPTED}" "${TEST_PLAINTEXT}"
