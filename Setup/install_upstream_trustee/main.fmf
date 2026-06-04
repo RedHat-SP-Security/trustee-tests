@@ -19,5 +19,5 @@ require:
  - perl-File-Compare
  - perl-File-Copy
  - perl-Time-Piece
-duration: 20m
+duration: 30m
 enabled: true
