@@ -1,6 +1,12 @@
 summary:
   Basic trustee attestation with upstream trustee
 
+provision:
+  hardware:
+    memory: '>= 8 GiB'
+    virtualization:
+      confidential: true
+
 discover:
   how: fmf
   test: 
