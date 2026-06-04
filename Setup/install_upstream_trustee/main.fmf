@@ -9,14 +9,15 @@ tag:
 framework: beakerlib
 require:
  - trustee-guest-components
- - clang 
- - make 
+ - clang
+ - make
  - git
- - protobuf 
- - protobuf-compiler 
+ - protobuf
+ - protobuf-compiler
  - perl-FindBin
  - perl-IPC-Cmd
  - perl-File-Compare
  - perl-File-Copy
+ - perl-Time-Piece
 duration: 10m
 enabled: true
