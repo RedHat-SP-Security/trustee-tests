@@ -9,6 +9,11 @@ description: |
 
   Does not require a confidential VM or real TEE hardware.
 
+provision:
+  hardware:
+    virtualization:
+      confidential: true
+
 discover:
   how: fmf
   test:
