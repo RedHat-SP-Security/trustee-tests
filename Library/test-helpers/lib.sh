@@ -774,7 +774,7 @@ trusteeInstallTDXDeps() {
         rlRun "curl -L -o ${local_filename} ${repo_url}"
         rlRun "tar -xf ./${local_filename}"
         pushd ${extracted_dir}
-        rlRun "dnf install -y ./*.rpm" 0 "Install SGX/TDX RPMs"
+        rlRun "dnf install -y --skip-broken ./*.rpm" 0 "Install SGX/TDX RPMs"
         popd
 }
 
