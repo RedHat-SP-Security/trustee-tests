@@ -1,6 +1,9 @@
 summary:
   Test clevis-pin-trustee with KBS and mock attestation
 
+environment:
+  TRUSTEE_RPM: "true"
+
 description: |
   Tests clevis encrypt/decrypt round-trip with:
   - KBS in container (coco-as-builtin, insecure_key, allow_all.rego)

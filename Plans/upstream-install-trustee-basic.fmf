@@ -1,6 +1,11 @@
 summary:
   Basic trustee attestation with upstream trustee
 
+provision:
+  hardware:
+    virtualization:
+      confidential: true
+
 discover:
   how: fmf
   test: 
