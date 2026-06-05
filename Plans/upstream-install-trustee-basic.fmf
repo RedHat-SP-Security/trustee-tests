@@ -5,6 +5,7 @@ provision:
   hardware:
     virtualization:
       confidential: true
+    memory: ">= 8GB"
 
 discover:
   how: fmf
