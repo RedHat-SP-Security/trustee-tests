@@ -148,10 +148,10 @@ trusteeCreateKbsConfig() {
         local kbs_policy_dir="/opa/confidential-containers/kbs"
         local kbs_repo_dir="/opt/confidential-containers/kbs/repository"
 
-        # The v0.13.0 Ear token broker requires an explicit signing key.
+        # The v0.13.0 Ear token broker requires an EC signing key (ES256).
         rlRun "mkdir -p ${as_work_dir}" 0 "Create AS work directory"
-        rlRun "openssl genpkey -algorithm RSA -out ${as_work_dir}/token.key -pkeyopt rsa_keygen_bits:2048" \
-            0 "Generate token signing key"
+        rlRun "openssl ecparam -name prime256v1 -genkey -noout -out ${as_work_dir}/token.key" \
+            0 "Generate token signing key (EC P-256)"
         rlRun "openssl req -new -x509 -key ${as_work_dir}/token.key -out ${as_work_dir}/token-cert.pem -days 1 -subj '/CN=kbs-test-token'" \
             0 "Generate token signing certificate"
 
