@@ -59,8 +59,8 @@ export SERVER_PORT="8080"
 export TRUSTEE_DIR="trustee"
 export TEST_DISK_IMG="test_disk.img"
 export TEST_DISK_DEV="/dev/loop0"
-# For Azure SEV-SNP VMs, this is the correct attester
-export ATTESTER_TYPE="az-snp-vtpm-attester"
+# Attester type for kbs-client build: snp-attester (AWS), az-snp-vtpm-attester (Azure)
+export ATTESTER=${ATTESTER:-"snp-attester"}
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #   Functions
@@ -566,7 +566,8 @@ Performs an intelligent check to see if the Key Broker Service (KBS) needs to be
 
 =item ATTESTER_TYPE (optional)
 
-The attester type to use when building the admin client. Defaults to tdx.
+The attester type to use when building the kbs-client. Defaults to the ATTESTER
+environment variable, or "snp-attester" if unset. Use "az-snp-vtpm-attester" for Azure CVMs.
 
 =back
 
@@ -649,7 +650,7 @@ trusteeBuildAndInstallKBS() {
 
     local repo_url="https://github.com/confidential-containers/trustee.git"
     local trustee_dir="trustee"
-    local attester_type=${1:-"az-snp-vtpm-attester"}
+    local attester_type=${1:-${ATTESTER:-"snp-attester"}}
 
     if [ ! -d "$trustee_dir" ]; then
         rlRun "git clone \"${repo_url}\" \"${trustee_dir}\"" 0 "Clone Trustee repository"
