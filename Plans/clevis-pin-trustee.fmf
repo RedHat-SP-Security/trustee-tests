@@ -10,7 +10,13 @@ description: |
   - Sample attester fallback on non-TEE hardware
   - allow_all.rego policy to accept sample attestation evidence
 
-  Does not require a confidential VM or real TEE hardware.
+  Requires a confidential VM for real TEE attestation.
+
+provision:
+  hardware:
+    virtualization:
+      confidential: true
+    memory: ">= 8GB"
 
 discover:
   how: fmf
