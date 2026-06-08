@@ -37,6 +37,15 @@ rlJournalStart
         rlRun "${__INTERNAL_trusteeTmpDir}/mount-luks-disk.sh"
         rlRun -s "lsblk"
         rlAssertGrep 'crypt /mnt/llm_models' $rlRun_LOG
+
+        # Verify real TEE attestation (not sample fallback)
+        rlLog "=== Confidential VM attestation verification ==="
+        rlAssertExists /dev/sev-guest "SNP guest device present"
+        rlRun -s "dmesg | grep -i 'SEV-SNP'" 0 "Kernel confirms SEV-SNP is active"
+        rlLog "--- KBS server attestation log ---"
+        rlRun -s "grep -i 'verifier.*check\|tee=' /var/tmp/trusteeLib/kbs.log" 0 "Show attestation verification entries"
+        rlRun "grep -E 'tee=Snp|tee=Tdx' /var/tmp/trusteeLib/kbs.log" 0 "KBS verified real TEE attestation evidence"
+        rlRun "grep 'tee=Sample' /var/tmp/trusteeLib/kbs.log" 1 "No sample attestation fallback"
     rlPhaseEnd
 
     # =================================================================
