@@ -140,8 +140,62 @@ trusteeCreateKbsConfig() {
     rlLog "Generating KBS config file for ${mode} mode at '${output_file}'..."
 
     # --- Create Config File ---
-    # Use a Here Document to write the file content.
-    cat > "${output_file}" <<EOF
+    if [ "$TRUSTEE_RPM" = "true" ]; then
+        # Old format (v0.13.0 era) for RPM-matched KBS builds and containers.
+        # The RPM's trustee-attester uses az-snp-vtpm-attester (no /dev/tpm0 on AWS),
+        # so attestation falls back to sample on AWS CVMs.
+        local as_work_dir="/opt/confidential-containers/attestation-service"
+        local kbs_policy_dir="/opa/confidential-containers/kbs"
+        local kbs_repo_dir="/opt/confidential-containers/kbs/repository"
+
+        # The v0.13.0 Ear token broker requires an explicit signing key.
+        rlRun "mkdir -p ${as_work_dir}" 0 "Create AS work directory"
+        rlRun "openssl genpkey -algorithm RSA -out ${as_work_dir}/token.key -pkeyopt rsa_keygen_bits:2048" \
+            0 "Generate token signing key"
+        rlRun "openssl req -new -x509 -key ${as_work_dir}/token.key -out ${as_work_dir}/token-cert.pem -days 1 -subj '/CN=kbs-test-token'" \
+            0 "Generate token signing certificate"
+
+        rlRun "mkdir -p ${kbs_policy_dir}" 0 "Create KBS policy directory"
+        printf 'package policy\n\ndefault allow = true\n' > "${kbs_policy_dir}/policy.rego"
+
+        cat > "${output_file}" <<EOF
+[http_server]
+${http_server_settings}
+sockets = ["${server_ip}:${server_port}"]
+
+[attestation_token]
+insecure_key = true
+
+[attestation_service]
+type = "coco_as_builtin"
+work_dir = "${as_work_dir}"
+policy_engine = "opa"
+
+[attestation_service.attestation_token_broker]
+type = "Ear"
+duration_min = 5
+
+[attestation_service.attestation_token_broker.signer]
+key_path = "${as_work_dir}/token.key"
+cert_path = "${as_work_dir}/token-cert.pem"
+
+[attestation_service.rvps_config]
+type = "BuiltIn"
+
+[policy_engine]
+policy_path = "${kbs_policy_dir}/policy.rego"
+
+[admin]
+insecure_api = true
+
+[[plugins]]
+name = "resource"
+type = "LocalFs"
+dir_path = "${kbs_repo_dir}"
+EOF
+    else
+        # New format (upstream main)
+        cat > "${output_file}" <<EOF
 [http_server]
 ${http_server_settings}
 sockets = ["${server_ip}:${server_port}"]
@@ -172,6 +226,7 @@ authorization_mode = "InsecureAllowAll"
 name = "resource"
 storage_backend_type = "kvstorage"
 EOF
+    fi
 
     rlLog "KBS config file created successfully."
 }
@@ -610,6 +665,7 @@ trusteeBuildAndInstallKBS() {
 
         case "$attester_version" in
             "0.10.0") required_commit_id="c8ca7ca4b8123f4a8a07913161403397a9db594f" ;;
+            "0.13.0") required_commit_id="d9eb5e0cb0aca97abe35b58908e061850ff60a51" ;;
             *)
                 rlFail "Unknown trustee-guest-components version '$attester_version'."
                 return 1
