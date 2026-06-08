@@ -9,9 +9,10 @@ framework: beakerlib
 tag:
   - CI-Tier-1
 require:
-  - tss2 
-  - tss2-devel 
-  - tpm2-tss-devel 
+  - tss2
+  - tss2-devel
+  - tpm2-tss-devel
+  - cryptsetup
 duration: 5m
 enabled: true
 /http:

@@ -20,7 +20,7 @@ rlJournalStart
         trusteeStartKbsServer
         rlRun "sleep 5"
         trusteeGetPolicyFile "allow_all.rego"
-        rlRun "/usr/local/bin/kbs-client --url ${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config --auth-private-key AdminKeys/private.key set-resource-policy --policy-file ${__INTERNAL_trusteeTmpDir}/allow_all.rego"
+        rlRun "/usr/local/bin/kbs-client --url ${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config set-resource-policy --policy-file ${__INTERNAL_trusteeTmpDir}/allow_all.rego"
     rlPhaseEnd
 
     # =================================================================
@@ -29,7 +29,7 @@ rlJournalStart
     rlPhaseStartTest "Test 1: Create and mount an encrypted LUKS disk"
         trusteeCreateLuksTestDisk
         # Push the luks-key to the KBS server using the admin kbs-client
-        rlRun "/usr/local/bin/kbs-client --url $HTTP_MODE://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config --auth-private-key AdminKeys/private.key set-resource --resource-file ./luks-key --path default/test/luks-key"
+        rlRun "/usr/local/bin/kbs-client --url $HTTP_MODE://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config set-resource --resource-file ./luks-key --path default/test/luks-key"
         # Create the auto-mount script using the official trustee-attester
         DATA_DISK_UUID=$(blkid -s UUID -o value ${TEST_DISK_DEV})
         # Create the auto-mount script using the kbs-client

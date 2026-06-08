@@ -147,31 +147,30 @@ ${http_server_settings}
 sockets = ["${server_ip}:${server_port}"]
 
 [attestation_token]
-insecure_key = true
+insecure_header_jwk = true
 extra_teekey_paths = ["/opt/confidential-containers/kbs/repository/tee_pubkey.pem"]
 
 [attestation_service]
 type = "coco_as_builtin"
-work_dir = "/opt/confidential-containers/attestation-service"
-policy_engine = "opa"
 
 [attestation_service.attestation_token_broker]
-type = "Ear"
 duration_min = 5
 
 [attestation_service.rvps_config]
 type = "BuiltIn"
 
-[policy_engine]
-policy_path = "/opa/confidential-containers/kbs/policy.rego"
+[storage_backend]
+storage_type = "LocalFs"
+
+[storage_backend.backends.local_fs]
+dir_path = "/opt/confidential-containers/kbs/repository"
 
 [admin]
-insecure_api = true
+authorization_mode = "InsecureAllowAll"
 
 [[plugins]]
 name = "resource"
-type = "LocalFs"
-dir_path = "/opt/confidential-containers/kbs/repository"
+storage_backend_type = "kvstorage"
 EOF
 
     rlLog "KBS config file created successfully."
