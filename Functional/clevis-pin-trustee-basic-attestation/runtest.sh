@@ -154,17 +154,59 @@ rlJournalStart
         # Show CVM hardware state for debugging
         rlLog "=== CVM hardware detection ==="
         rlRun "ls -la /dev/sev-guest /dev/tdx-guest 2>&1 || true" 0,1 "Check TEE device nodes"
+        rlRun "stat /dev/sev-guest 2>&1 || true" 0,1 "Detailed /dev/sev-guest stat"
         rlRun "ls -la /sys/devices/platform/sev-guest 2>&1 || true" 0,1 "Check sysfs SEV-SNP platform"
         rlRun "dmesg | grep -i 'SEV\|SNP\|TDX\|confidential' || true" 0,1 "Kernel TEE messages"
+        rlRun "id" 0 "Check current user (must be root for /dev/sev-guest)"
+        rlRun "lsmod | grep -i snp || true" 0,1 "Check SNP kernel modules"
+        rlRun "uname -r" 0 "Kernel version"
+
+        # RPM and binary details
+        rlLog "=== RPM and binary info ==="
         rlLog "trustee-attester version: $(trustee-attester --version 2>&1 || echo 'unknown')"
+        rlRun "rpm -qi trustee-guest-components 2>&1 || true" 0,1 "RPM package info"
+        rlRun "strings \$(which trustee-attester) | grep -iE 'sev.crate|sev-[0-9]|snp.report|SNP_GET' | head -20 || true" 0,1 "sev crate version strings in binary"
+        rlRun "ldd \$(which trustee-attester) 2>&1 || true" 0,1 "Linked libraries"
 
-        # Enable debug logging for the attestation chain
-        export RUST_LOG=debug
+        # Test direct /dev/sev-guest access (independent of sev crate)
+        rlLog "=== Direct /dev/sev-guest access test ==="
+        rlRun "python3 -c \"
+import os, fcntl, struct
+fd = os.open('/dev/sev-guest', os.O_RDWR)
+print('open OK, fd=%d' % fd)
+# SNP_GET_REPORT = _IOWR('S', 0x0, 192) = 0xc0c05300
+# Build a minimal request: 64 bytes msg_version(0) + 96 bytes zero report_data + 32 bytes padding
+req = struct.pack('<I', 1) + b'\\x00' * 188  # msg_version=1, rest zeroed
+try:
+    fcntl.ioctl(fd, 0xc0c05300, req)
+    print('ioctl SNP_GET_REPORT succeeded')
+except OSError as e:
+    print('ioctl SNP_GET_REPORT error: %s (errno=%d)' % (e, e.errno))
+os.close(fd)
+\" 2>&1 || true" 0,1 "Direct SNP report ioctl test"
 
-        # Encrypt
+        # Trace-level logging for sev crate internals
+        export RUST_LOG=trace
+
+        # Run attester standalone with strace to capture exact ioctl failure
+        rlLog "=== Standalone attester with strace ==="
+        rlRun "timeout 30 strace -f -e trace=openat,ioctl,read,write -o ${TMP_DIR}/strace.log \
+            trustee-attester --url ${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT} \
+            get-resource --path ${TEST_KEY_PATH} \
+            2>${TMP_DIR}/attester-trace.log || true" 0,1 "Strace attester"
+        rlLog "=== attester TRACE log ==="
+        rlRun "cat ${TMP_DIR}/attester-trace.log" 0,1 "Show trace log"
+        rlLog "=== strace: sev-guest ioctl calls ==="
+        rlRun "grep -E 'sev.guest|SNP|0x5300' ${TMP_DIR}/strace.log | head -30 || true" 0,1 "Show sev-guest ioctls"
+        rlLog "=== strace: all ioctl calls ==="
+        rlRun "grep 'ioctl' ${TMP_DIR}/strace.log | head -50 || true" 0,1 "Show all ioctls"
+        rlLog "=== strace: file opens ==="
+        rlRun "grep -E 'openat.*sev|openat.*snp|openat.*tpm|openat.*misc' ${TMP_DIR}/strace.log || true" 0,1 "Show TEE device opens"
+
+        # Encrypt (with trace logging still active)
         rlRun 'echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG}" > "${TMP_DIR}/encrypted.jwe" 2> "${TMP_DIR}/encrypt.log"' 0 "clevis encrypt trustee"
 
-        # Always show client-side logs (trustee-attester debug output)
+        # Always show client-side logs (trustee-attester trace output)
         rlLog "=== clevis encrypt log (trustee-attester output) ==="
         rlRun "cat ${TMP_DIR}/encrypt.log" 0,1 "Show encrypt log"
 
