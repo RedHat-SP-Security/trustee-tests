@@ -169,24 +169,38 @@ rlJournalStart
         rlRun "ldd \$(which trustee-attester) 2>&1 || true" 0,1 "Linked libraries"
 
         # Test direct /dev/sev-guest access (independent of sev crate)
+        # snp_guest_request_ioctl is 32 bytes (u8 + 7pad + u64 + u64 + u64)
+        # SNP_GET_REPORT = _IOWR('S', 0x0, 32) = 0xC0205300
         rlLog "=== Direct /dev/sev-guest access test ==="
         rlRun "python3 -c \"
-import os, fcntl, struct
+import os, fcntl, struct, ctypes
 fd = os.open('/dev/sev-guest', os.O_RDWR)
 print('open OK, fd=%d' % fd)
-# SNP_GET_REPORT = _IOWR('S', 0x0, 192) = 0xc0c05300
-# Build a minimal request: 64 bytes msg_version(0) + 96 bytes zero report_data + 32 bytes padding
-req = struct.pack('<I', 1) + b'\\x00' * 188  # msg_version=1, rest zeroed
+# snp_report_req: 64 bytes user_data + 4 bytes vmpl = 68 bytes
+req_buf = ctypes.create_string_buffer(68)
+# snp_report_resp: 4000 bytes
+resp_buf = ctypes.create_string_buffer(4000)
+# snp_guest_request_ioctl: u8 msg_version + 7 pad + u64 req_data + u64 resp_data + u64 exitinfo2
+ioctl_struct = struct.pack('<B7xQQQ', 1, ctypes.addressof(req_buf), ctypes.addressof(resp_buf), 0)
+ioctl_buf = ctypes.create_string_buffer(ioctl_struct)
+print('req_buf at %#x, resp_buf at %#x, ioctl_buf size=%d' % (ctypes.addressof(req_buf), ctypes.addressof(resp_buf), len(ioctl_buf)))
 try:
-    fcntl.ioctl(fd, 0xc0c05300, req)
-    print('ioctl SNP_GET_REPORT succeeded')
+    fcntl.ioctl(fd, 0xC0205300, ioctl_buf)
+    result = struct.unpack('<B7xQQQ', ioctl_buf.raw)
+    print('SNP_GET_REPORT SUCCEEDED, exitinfo2=%#x' % result[3])
+    print('Report first 64 bytes: %s' % resp_buf.raw[:64].hex())
 except OSError as e:
-    print('ioctl SNP_GET_REPORT error: %s (errno=%d)' % (e, e.errno))
+    result = struct.unpack('<B7xQQQ', ioctl_buf.raw)
+    print('SNP_GET_REPORT FAILED: %s (errno=%d)' % (e, e.errno))
+    print('exitinfo2=%#x fw_error=%#x vmm_error=%#x' % (result[3], result[3] & 0xFFFFFFFF, (result[3] >> 32) & 0xFFFFFFFF))
 os.close(fd)
 \" 2>&1 || true" 0,1 "Direct SNP report ioctl test"
 
         # Trace-level logging for sev crate internals
         export RUST_LOG=trace
+
+        # Install strace for ioctl capture (not present by default)
+        rlRun "yum install -y strace 2>&1 | tail -3" 0,1 "Install strace"
 
         # Run attester standalone with strace to capture exact ioctl failure
         rlLog "=== Standalone attester with strace ==="
