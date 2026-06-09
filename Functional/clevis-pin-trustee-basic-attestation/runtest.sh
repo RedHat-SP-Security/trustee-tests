@@ -151,14 +151,42 @@ rlJournalStart
         CLEVIS_CONFIG="{\"servers\":[{\"url\":\"${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}\",\"cert\":\"${CERT_VALUE}\"}],\"path\":\"${TEST_KEY_PATH}\"}"
         rlLog "Clevis trustee config: ${CLEVIS_CONFIG}"
 
+        # Show CVM hardware state for debugging
+        rlLog "=== CVM hardware detection ==="
+        rlRun "ls -la /dev/sev-guest /dev/tdx-guest 2>&1 || true" 0,1 "Check TEE device nodes"
+        rlRun "ls -la /sys/devices/platform/sev-guest 2>&1 || true" 0,1 "Check sysfs SEV-SNP platform"
+        rlRun "dmesg | grep -i 'SEV\|SNP\|TDX\|confidential' || true" 0,1 "Kernel TEE messages"
+        rlLog "trustee-attester version: $(trustee-attester --version 2>&1 || echo 'unknown')"
+
+        # Enable debug logging for the attestation chain
+        export RUST_LOG=debug
+
         # Encrypt
         rlRun 'echo -n "${TEST_PLAINTEXT}" | clevis encrypt trustee "${CLEVIS_CONFIG}" > "${TMP_DIR}/encrypted.jwe" 2> "${TMP_DIR}/encrypt.log"' 0 "clevis encrypt trustee"
+
+        # Always show client-side logs (trustee-attester debug output)
+        rlLog "=== clevis encrypt log (trustee-attester output) ==="
+        rlRun "cat ${TMP_DIR}/encrypt.log" 0,1 "Show encrypt log"
 
         # Decrypt
         rlRun 'clevis decrypt < "${TMP_DIR}/encrypted.jwe" > "${TMP_DIR}/decrypted.txt" 2> "${TMP_DIR}/decrypt.log"' 0 "clevis decrypt"
 
+        rlLog "=== clevis decrypt log ==="
+        rlRun "cat ${TMP_DIR}/decrypt.log" 0,1 "Show decrypt log"
+
         DECRYPTED=$(<"${TMP_DIR}/decrypted.txt")
         rlAssertEquals "Decrypted plaintext matches original" "${DECRYPTED}" "${TEST_PLAINTEXT}"
+
+        # Check KBS container log for attestation type
+        rlLog "=== KBS attestation verification ==="
+        rlRun "podman logs ${KBS_CONTAINER} 2>&1 | sed 's/\x1b\[[0-9;]*m//g' > ${TMP_DIR}/kbs-container.log" 0 "Capture KBS container log"
+        rlRun "grep -i 'verifier.*check\|tee=' ${TMP_DIR}/kbs-container.log || true" 0,1 "Show attestation entries"
+        if [ -e /dev/sev-guest ] || [ -e /dev/tdx-guest ]; then
+            rlRun "grep -E 'tee=Snp|tee=Tdx' ${TMP_DIR}/kbs-container.log" 0 "KBS verified real TEE attestation"
+            rlRun "grep 'tee=Sample' ${TMP_DIR}/kbs-container.log" 1 "No sample attestation fallback"
+        else
+            rlLog "No CVM hardware detected — sample attester fallback expected"
+        fi
     rlPhaseEnd
 
     # ==================================================================
