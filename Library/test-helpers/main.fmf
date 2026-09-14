@@ -1,17 +1,18 @@
 summary: test-helpers
-description: Beakerlib library implementing various trustee related functions that should simplify test implementation.
+description: Beakerlib library implementing various trustee related functions 
+    that should simplify test implementation.
 contact: Patrik Koncity <pkoncity@redhat.com>
 component: []
 test: ./runtest.sh
 framework: beakerlib
 require:
-# need to resolve require packages
- - curl
- - tar
- - openssl
+  - curl
+  - tar
+  - openssl
 duration: 5m
 enabled: true
 adjust:
--   enabled: false
+  - enabled: false
     when: distro == rhel-4, rhel-5, rhel-6, rhel-7, rhel-8
     continue: false
+id: a2a1e682-52e0-431d-a587-01c2b5403901

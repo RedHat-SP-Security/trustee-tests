@@ -33,10 +33,11 @@ enabled: true
 /http:
     environment:
         HTTP_MODE: http
+    id: 1ea6cca2-821a-4823-91be-14c5d03a55e2
 /https:
     environment:
         HTTP_MODE: https
-
+    id: 4389f66e-a1ca-45c8-b5e5-162cbd627c58
 adjust+:
   - enabled: false
     when: distro <= rhel-9

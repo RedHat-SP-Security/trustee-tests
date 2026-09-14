@@ -3,16 +3,16 @@ description: |
     Provide trustee basic attestation.
 contact: Patrik Koncity <pkoncity@redhat.com>
 component:
-  -  trustee-guest-components
+  - trustee-guest-components
 test: ./runtest.sh
 framework: beakerlib
 tag:
   - CI-Tier-1
 require:
   - trustee-guest-components
-  - tss2 
-  - tss2-devel 
-  - tpm2-tss-devel 
+  - tss2
+  - tss2-devel
+  - tpm2-tss-devel
 duration: 5m
 enabled: true
 adjust+:
@@ -22,9 +22,11 @@ adjust+:
 /http:
     environment:
         HTTP_MODE: http
+    id: 38f4f2fe-1313-4b38-a957-bcb922ad3286
 /https:
     environment:
         HTTP_MODE: https
+    id: 2602cab2-d161-4423-a9b0-5a9622426a78
 /https_pqc_cert:
     environment:
         HTTP_MODE: https
@@ -34,3 +36,4 @@ adjust+:
       - enabled: false
         when: distro < rhel-10.1 or distro < fedora-43
         because: PQC is available from this version of OS
+    id: b11e1bde-df12-4b59-b789-1a6d4a0d4878
