@@ -11,7 +11,6 @@ description: |
     KBS runs in a container (ghcr.io/confidential-containers/staged-images/kbs)
     because the RPM binary lacks the coco-as-builtin feature needed for RCAR.
     Does not require a confidential VM or real TEE hardware.
-
 contact: Adam Prikryl <aprikryl@redhat.com>
 component:
   - clevis-pin-trustee
@@ -30,14 +29,14 @@ require:
   - openssl
 duration: 5m
 enabled: true
-
 /http:
     environment:
         HTTP_MODE: http
+    id: 85603105-cf4b-417a-8282-a4cffee4f8e3
 /https:
     environment:
         HTTP_MODE: https
-
+    id: 97735cfd-1b1d-4737-843e-7766a9356b38
 adjust+:
   - enabled: false
     when: arch != x86_64
