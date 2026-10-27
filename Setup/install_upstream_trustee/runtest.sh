@@ -11,7 +11,7 @@ rlJournalStart
         rlRun 'rlImport "./test-helpers"' || rlDie "cannot import trustee-tests/test-helpers library"
         # Install rust
         trusteeInstallRust
-        trusteeInstallTDXDeps
+        trusteeInstallTDXDeps || rlDie "Failed to install SGX/TDX build dependencies"
         trusteeBuildAndInstallKBS
     rlPhaseEnd
 
