@@ -753,29 +753,56 @@ Installs Intel SGX/TDX package dependencies required for the Trustee server.
 
 =item URL (optional)
 
-A custom URL for the SGX RPM repository archive (`.tgz`). If this argument is not provided, the function uses a default URL for RHEL 9.4.
+A custom URL for the SGX RPM repository archive (`.tgz`). If this argument is not provided, the function selects a versioned Intel archive for RHEL 9.2, 9.4, 9.6, 9.8, 10.0, or 10.2.
 
 =back
 
-Return 0 if unit file exists, 1 if not.
+Returns 0 when the SGX/TDX RPMs are installed, or 1 on failure.
 
 =cut
 
 
 trusteeInstallTDXDeps() {
-        # Define the default URL and the expected local filename
-        local default_url="https://download.01.org/intel-sgx/latest/linux-latest/distro/rhel9.4-server/sgx_rpm_local_repo.tgz"
-        local repo_url=${1:-$default_url}
+        local repo_url=${1:-}
         local local_filename="sgx_rpm_local_repo.tgz"
         local extracted_dir="sgx_rpm_local_repo"
 
-        # Install Intel SGX/DCAP packages (build-time dependency for Trustee server)
-        # Use -o to save the file with a predictable name, and -L to follow redirects.
-        rlRun "curl -L -o ${local_filename} ${repo_url}"
-        rlRun "tar -xf ./${local_filename}"
-        pushd ${extracted_dir}
-        rlRun "dnf install -y ./*.rpm" 0 "Install SGX/TDX RPMs"
-        popd
+        if [ -z "${repo_url}" ]; then
+                local distro_version sgx_release
+                distro_version=$(. /etc/os-release && printf '%s:%s' "${ID}" "${VERSION_ID}") || {
+                        rlFail "Could not read the RHEL version from /etc/os-release."
+                        return 1
+                }
+                case "${distro_version}" in
+                        rhel:9.2) sgx_release="2.25" ;;
+                        rhel:9.4) sgx_release="2.29" ;;
+                        rhel:9.6|rhel:9.8|rhel:10.0|rhel:10.2) sgx_release="2.30.1" ;;
+                        *)
+                                rlFail "No Intel SGX RPM archive is configured for ${distro_version}."
+                                return 1
+                                ;;
+                esac
+                repo_url="https://download.01.org/intel-sgx/sgx-linux/${sgx_release}/distro/rhel${distro_version#rhel:}-server/sgx_rpm_local_repo.tgz"
+        fi
+
+        # finally install Intel SGX/DCAP packages
+        rlRun "curl --fail --location --silent --show-error -o ${local_filename} ${repo_url}" 0 "Download SGX/TDX RPM archive" || return 1
+        rlRun "rm -rf -- ${extracted_dir}" 0 "Remove previous SGX/TDX RPM extraction" || return 1
+        rlRun "tar -xf ./${local_filename}" 0 "Extract SGX/TDX RPM archive" || return 1
+        if [ ! -d "${extracted_dir}" ]; then
+                rlFail "SGX/TDX RPM archive did not contain ${extracted_dir}."
+                return 1
+        fi
+        pushd "${extracted_dir}" || return 1
+        rlRun "dnf install -y ./*.rpm" 0 "Install SGX/TDX RPMs" || {
+                popd
+                return 1
+        }
+        rlRun "rpm -q libsgx-dcap-quote-verify-devel" 0 "Verify SGX DCAP dev package" || {
+                popd
+                return 1
+        }
+        popd || return 1
 }
 
 true <<'=cut'
