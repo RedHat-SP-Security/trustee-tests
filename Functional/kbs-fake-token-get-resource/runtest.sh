@@ -236,6 +236,11 @@ EOF
         rlRun "echo -n '${TEST_SECRET}' > ${KBS_REPO_DIR}/default/keys/test-secret"
         rlAssertExists "${KBS_REPO_DIR}/default/keys/test-secret"
         rlLog "Pre-populated secret in KBS repository"
+
+        # Save static token to file for trustee-attester
+        echo -n "${STATIC_TOKEN}" > ${KBS_WORK_DIR}/attestation_token
+        rlAssertExists "${KBS_WORK_DIR}/attestation_token"
+        rlLog "Saved attestation token to ${KBS_WORK_DIR}/attestation_token"
     rlPhaseEnd
 
     rlPhaseStartTest "Access resource with pre-signed JWT token"
@@ -272,6 +277,37 @@ EOF
             rlFail "Expected 401, got ${HTTP_CODE}"
         fi
     rlPhaseEnd
+
+    # NOTE: trustee-attester does not support --attestation-token option.
+    # It only performs live TEE attestation, so it cannot be used with pre-signed fake tokens.
+    # Use kbs-client instead if pre-signed token support is needed:
+    #   kbs-client --url <URL> get-resource --attestation-token <file> --tee-key-file <key> --path <path>
+    #
+    # rlPhaseStartTest "Access resource using trustee-attester with pre-signed token"
+    #     if [[ "$HTTP_MODE" == "https" ]]; then
+    #         ATTESTER_CERT_OPTS="--cert-file ${PWD}/HttpsCerts/host.crt"
+    #     else
+    #         ATTESTER_CERT_OPTS=""
+    #     fi
+    #
+    #     rlLog "Using trustee-attester with pre-signed token from ${KBS_WORK_DIR}/attestation_token"
+    #     rlRun -s "trustee-attester \
+    #         --url ${HTTP_MODE}://localhost:${KBS_PORT} \
+    #         ${ATTESTER_CERT_OPTS} \
+    #         get-resource \
+    #         --attestation-token ${KBS_WORK_DIR}/attestation_token \
+    #         --tee-key-file keys/tee_private.pem \
+    #         --path default/keys/test-secret" 0 "Get resource with trustee-attester"
+    #
+    #     ATTESTER_RESULT=$(cat "$rlRun_LOG")
+    #     rlLog "trustee-attester returned: '${ATTESTER_RESULT}'"
+    #
+    #     if [[ "$ATTESTER_RESULT" == "$TEST_SECRET" ]]; then
+    #         rlPass "trustee-attester retrieved and decrypted secret correctly"
+    #     else
+    #         rlFail "trustee-attester result mismatch: got '${ATTESTER_RESULT}', expected '${TEST_SECRET}'"
+    #     fi
+    # rlPhaseEnd
 
     rlPhaseStartCleanup "Tear down KBS and clean up files"
         # Show KBS logs only if test failed
