@@ -1,0 +1,13 @@
+adjust+:
+  - environment+:
+      TRUSTEE_GUEST_COMPONENTS_KBS_IMAGE: ghcr.io/confidential-containers/staged-images/kbs:a150bcccf847361593a53df0e044ddbc07914ced
+      TRUSTEE_KBS_PROFILE: legacy
+      TRUSTEE_GUEST_COMPONENTS_EXPECTED_VERSION: "0.13"
+    when: distro == rhel-10.3
+    because: This image was verified with trustee-guest-components 0.13.0 on RHEL 10.3
+  - environment+:
+      TRUSTEE_GUEST_COMPONENTS_KBS_IMAGE: ghcr.io/confidential-containers/staged-images/kbs@sha256:d00fda6ada6b117b2cb72f013f5e5488f2768115044a4e081d64ebfd74f12790
+      TRUSTEE_KBS_PROFILE: v022
+      TRUSTEE_GUEST_COMPONENTS_EXPECTED_VERSION: "0.22"
+    when: distro == rhel-10.4
+    because: The v0.22 client uses RCAR protocol 0.4.0

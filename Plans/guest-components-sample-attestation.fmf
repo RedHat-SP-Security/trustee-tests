@@ -1,0 +1,14 @@
+summary: Guest-components sample-attestation plan
+
+description: |
+  Run the RPM-installed guest-side attester against a protocol-compatible
+  containerized KBS. The plan is for standard x86_64 hardware and does not
+  request a Confidential VM.
+
+discover:
+  how: fmf
+  test:
+    - /Functional/guest-components-sample-attestation
+
+execute:
+  how: tmt

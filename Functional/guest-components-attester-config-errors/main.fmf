@@ -1,0 +1,29 @@
+summary: Guest attester endpoint and TLS errors
+description: |
+    Exercise URL, connection, and HTTPS CA handling of the RPM-installed
+    trustee-attester using a local KBS with sample attestation.
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  - trustee-guest-components
+test: ./runtest.sh
+framework: beakerlib
+tag:
+  - CI-Tier-1-guest
+tier: '1'
+require:
+  - trustee-guest-components
+  - podman
+  - openssl
+duration: 5m
+/http:
+    environment:
+        HTTP_MODE: http
+    id: a31fc3dc-24a8-4669-bda6-d28a97a160a0
+/https:
+    environment:
+        HTTP_MODE: https
+    id: ab6c5514-c00a-4e3c-a440-aa8736bee132
+adjust+:
+  - enabled: false
+    when: arch != x86_64
+    continue: false
