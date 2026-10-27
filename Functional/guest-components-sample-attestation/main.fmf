@@ -1,0 +1,32 @@
+summary: Guest sample-attestation resource retrieval
+description: |
+    Exercise the RPM-installed trustee-attester directly on standard hardware.
+    The sample attester obtains a token from a local KBS and retrieves a test
+    resource. This validates the guest-side command and RCAR flow; it does not
+    validate evidence from real TEE hardware.
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  - trustee-guest-components
+test: ./runtest.sh
+framework: beakerlib
+tag:
+  - CI-Tier-1-guest
+tier: '1'
+require:
+  - trustee-guest-components
+  - podman
+  - openssl
+duration: 5m
+enabled: true
+/http:
+    environment:
+        HTTP_MODE: http
+    id: d292b804-65cf-4ae6-b048-5e4d0f135a2a
+/https:
+    environment:
+        HTTP_MODE: https
+    id: 49215131-c0a8-4a3e-9468-62ad26970154
+adjust+:
+  - enabled: false
+    when: arch != x86_64
+    continue: false

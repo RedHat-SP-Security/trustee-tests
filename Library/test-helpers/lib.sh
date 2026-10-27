@@ -62,6 +62,15 @@ export TEST_DISK_DEV="/dev/loop0"
 # For Azure SEV-SNP VMs, this is the correct attester
 export ATTESTER_TYPE="az-snp-vtpm-attester"
 
+# KBS layout and configuration changed with RCAR 0.4.0. The profile can be
+# selected by the test plan or derived from the installed guest-components RPM.
+export TRUSTEE_KBS_PROFILE="${TRUSTEE_KBS_PROFILE:-}"
+export TRUSTEE_KBS_REPO_DIR="${TRUSTEE_KBS_REPO_DIR:-}"
+export TRUSTEE_KBS_POLICY_DIR="${TRUSTEE_KBS_POLICY_DIR:-}"
+export TRUSTEE_KBS_RESOURCE_POLICY_FILE="${TRUSTEE_KBS_RESOURCE_POLICY_FILE:-}"
+export TRUSTEE_KBS_AS_WORK_DIR="${TRUSTEE_KBS_AS_WORK_DIR:-}"
+export TRUSTEE_KBS_STORAGE_DIR="${TRUSTEE_KBS_STORAGE_DIR:-}"
+
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #   Functions
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
@@ -101,8 +110,93 @@ If MODE is http, it configures the server with insecure_http = true.
 
 =cut
 
+trusteeSelectCompatibility() {
+    if [[ -z "${TRUSTEE_KBS_PROFILE}" ]]; then
+        local guest_version
+        guest_version=$(rpm -q --qf '%{VERSION}' trustee-guest-components 2>/dev/null || true)
+        case "${guest_version}" in
+            0.22.*)
+                TRUSTEE_KBS_PROFILE="v022"
+                ;;
+            *)
+                TRUSTEE_KBS_PROFILE="legacy"
+                ;;
+        esac
+    fi
+
+    case "${TRUSTEE_KBS_PROFILE}" in
+        legacy)
+            TRUSTEE_KBS_REPO_DIR="/opt/confidential-containers/kbs/repository"
+            TRUSTEE_KBS_POLICY_DIR="/opa/confidential-containers/kbs"
+            TRUSTEE_KBS_RESOURCE_POLICY_FILE="${TRUSTEE_KBS_POLICY_DIR}/policy.rego"
+            TRUSTEE_KBS_AS_WORK_DIR="/opt/confidential-containers/attestation-service"
+            TRUSTEE_KBS_STORAGE_DIR=""
+            ;;
+        v022)
+            TRUSTEE_KBS_STORAGE_DIR="/opt/confidential-containers/trustee"
+            TRUSTEE_KBS_REPO_DIR="${TRUSTEE_KBS_STORAGE_DIR}/repository"
+            TRUSTEE_KBS_POLICY_DIR="${TRUSTEE_KBS_STORAGE_DIR}/kbs"
+            TRUSTEE_KBS_RESOURCE_POLICY_FILE="${TRUSTEE_KBS_POLICY_DIR}/resource-policy.rego"
+            TRUSTEE_KBS_AS_WORK_DIR="/opt/confidential-containers/attestation-service"
+            ;;
+        *)
+            rlDie "Unknown TRUSTEE_KBS_PROFILE '${TRUSTEE_KBS_PROFILE}'."
+            return 1
+            ;;
+    esac
+
+    export TRUSTEE_KBS_PROFILE TRUSTEE_KBS_REPO_DIR TRUSTEE_KBS_POLICY_DIR
+    export TRUSTEE_KBS_RESOURCE_POLICY_FILE TRUSTEE_KBS_AS_WORK_DIR
+    export TRUSTEE_KBS_STORAGE_DIR
+}
+
+trusteeAssertGuestComponentsVersion() {
+    local expected="${TRUSTEE_GUEST_COMPONENTS_EXPECTED_VERSION:-}"
+    if [[ -z "${expected}" ]]; then
+        return 0
+    fi
+
+    local actual
+    actual=$(rpm -q --qf '%{VERSION}' trustee-guest-components 2>/dev/null) || \
+        rlDie "Could not determine trustee-guest-components version."
+
+    if [[ "${actual}" != "${expected}"* ]]; then
+        rlDie "Expected trustee-guest-components ${expected}*, found ${actual}."
+    fi
+}
+
+trusteeResourceUri() {
+    local resource_path="$1"
+
+    if [[ "${TRUSTEE_KBS_PROFILE}" == "v022" ]]; then
+        printf 'kbs:///%s' "${resource_path}"
+    else
+        printf '%s' "${resource_path}"
+    fi
+}
+
+trusteeResourceFile() {
+    local resource_path="$1"
+
+    if [[ "${TRUSTEE_KBS_PROFILE}" == "v022" ]]; then
+        local encoded_path="${resource_path//\//\\x2F}"
+        printf '%s/%s' "${TRUSTEE_KBS_REPO_DIR}" "${encoded_path}"
+    else
+        printf '%s/%s' "${TRUSTEE_KBS_REPO_DIR}" "${resource_path}"
+    fi
+}
+
+trusteeRequireKbsImage() {
+    local image="$1"
+
+    if [[ -z "${image}" ]]; then
+        rlDie "No KBS image mapping is defined for this distro."
+    fi
+}
 
 trusteeCreateKbsConfig() {
+    trusteeSelectCompatibility
+
     # --- Parameter Validation ---
     if [[ "$1" != "http" && "$1" != "https" ]]; then
         rlFail "Invalid mode specified. Must be 'http' or 'https'."
@@ -140,8 +234,41 @@ trusteeCreateKbsConfig() {
     rlLog "Generating KBS config file for ${mode} mode at '${output_file}'..."
 
     # --- Create Config File ---
-    # Use a Here Document to write the file content.
-    cat > "${output_file}" <<EOF
+    if [[ "${TRUSTEE_KBS_PROFILE}" == "v022" ]]; then
+        cat > "${output_file}" <<EOF
+[http_server]
+${http_server_settings}
+sockets = ["${server_ip}:${server_port}"]
+
+[attestation_token]
+insecure_header_jwk = true
+
+[attestation_service]
+type = "coco_as_builtin"
+work_dir = "${TRUSTEE_KBS_AS_WORK_DIR}"
+
+[attestation_service.attestation_token_config]
+type = "Ear"
+duration_min = 5
+
+[attestation_service.rvps_config]
+type = "BuiltIn"
+
+[admin]
+authorization_mode = "InsecureAllowAll"
+
+[[plugins]]
+name = "resource"
+storage_backend_type = "kvstorage"
+
+[storage_backend]
+storage_type = "local_fs"
+
+[storage_backend.backends.local_fs]
+dir_path = "${TRUSTEE_KBS_STORAGE_DIR}"
+EOF
+    else
+        cat > "${output_file}" <<EOF
 [http_server]
 ${http_server_settings}
 sockets = ["${server_ip}:${server_port}"]
@@ -171,8 +298,15 @@ insecure_api = true
 [[plugins]]
 name = "resource"
 type = "LocalFs"
-dir_path = "/opt/confidential-containers/kbs/repository"
+dir_path = "${TRUSTEE_KBS_REPO_DIR}"
 EOF
+    fi
+
+    rlRun "mkdir -p '${TRUSTEE_KBS_REPO_DIR}' '${TRUSTEE_KBS_POLICY_DIR}' '${TRUSTEE_KBS_AS_WORK_DIR}'" \
+        0 "Create KBS compatibility directories"
+    if [[ -n "${TRUSTEE_KBS_STORAGE_DIR}" ]]; then
+        rlRun "mkdir -p '${TRUSTEE_KBS_STORAGE_DIR}'" 0 "Create KBS storage directory"
+    fi
 
     rlLog "KBS config file created successfully."
 }
@@ -463,12 +597,15 @@ The directory where the key files will be saved. Defaults to test.
 
 This function first checks if tee_key.pem or tee_pubkey.pem already exist in the source directory. If they do, the function will skip the entire process.
 
-After successful generation, the new public key is copied to /opt/confidential-containers/kbs/repository/tee_pubkey.pem.
+After successful generation, the new public key is copied to the selected KBS
+repository directory as tee_pubkey.pem.
 
 =cut
 
 
 trusteeGenerateTeeKey() {
+    trusteeSelectCompatibility
+
     # Set the output directory, defaulting to 'test' if not provided.
     local key_dir=${1:-"TeeKeys"}
     local private_key="${key_dir}/tee_key.pem"
@@ -487,7 +624,7 @@ trusteeGenerateTeeKey() {
     rlRun "openssl rsa -in \"${private_key}\" -pubout -out \"${public_key}\"" 0 "Extract TEE public key"
     # --- Deploy Public Key ---
     rlLog "Deploying TEE public key to KBS repository..."
-    local kbs_repo_dir="/opt/confidential-containers/kbs/repository"
+    local kbs_repo_dir="${TRUSTEE_KBS_REPO_DIR}"
     rlRun "mkdir -p \"${kbs_repo_dir}\"" 0 "Ensure KBS repository directory exists"
     rlRun "cp \"${public_key}\" \"${kbs_repo_dir}/tee_pubkey.pem\"" 0 "Copy TEE public key to repository"
     rlLog "TEE key generation and deployment complete."
@@ -610,6 +747,8 @@ trusteeBuildAndInstallKBS() {
 
         case "$attester_version" in
             "0.10.0") required_commit_id="c8ca7ca4b8123f4a8a07913161403397a9db594f" ;;
+            "0.13.0") required_commit_id="d9eb5e0cb0aca97abe35b58908e061850ff60a51" ;;
+            "0.22.0") required_commit_id="512fed65642015b849f38fb13bfdec7806639987" ;;
             *)
                 rlFail "Unknown trustee-guest-components version '$attester_version'."
                 return 1
@@ -911,9 +1050,9 @@ paths used by trusteeCreateKbsConfig):
 
 =item * Config file
 
-=item * KBS repository (/opt/confidential-containers/kbs/repository)
+=item * KBS repository, selected by TRUSTEE_KBS_PROFILE
 
-=item * KBS policy (/opa/confidential-containers/kbs)
+=item * KBS policy, selected by TRUSTEE_KBS_PROFILE
 
 =item * AS work directory (/opt/confidential-containers/attestation-service)
 
@@ -930,14 +1069,16 @@ The function will rlDie if the container fails to start.
 =cut
 
 trusteeStartKbsContainer() {
+    trusteeSelectCompatibility
+
     local container_name=${1:-"kbs-trustee-test"}
     local image=${2:-"ghcr.io/confidential-containers/staged-images/kbs:latest"}
     local config_file=${3:-"$(pwd)/config/kbs-config.toml"}
 
     # Paths must match those in the KBS config generated by trusteeCreateKbsConfig
-    local kbs_repo_dir="/opt/confidential-containers/kbs/repository"
-    local kbs_policy_dir="/opa/confidential-containers/kbs"
-    local as_work_dir="/opt/confidential-containers/attestation-service"
+    local kbs_repo_dir="${TRUSTEE_KBS_REPO_DIR}"
+    local kbs_policy_dir="${TRUSTEE_KBS_POLICY_DIR}"
+    local as_work_dir="${TRUSTEE_KBS_AS_WORK_DIR}"
 
     if [[ ! -f "${config_file}" ]]; then
         rlFail "KBS config file not found at '${config_file}'. Run trusteeCreateKbsConfig first."
@@ -948,8 +1089,12 @@ trusteeStartKbsContainer() {
 
     # Build volume mount list
     local podman_volumes="-v ${config_file}:${config_file}:Z"
-    podman_volumes+=" -v ${kbs_repo_dir}:${kbs_repo_dir}:Z"
-    podman_volumes+=" -v ${kbs_policy_dir}:${kbs_policy_dir}:Z"
+    if [[ -n "${TRUSTEE_KBS_STORAGE_DIR}" ]]; then
+        podman_volumes+=" -v ${TRUSTEE_KBS_STORAGE_DIR}:${TRUSTEE_KBS_STORAGE_DIR}:Z"
+    else
+        podman_volumes+=" -v ${kbs_repo_dir}:${kbs_repo_dir}:Z"
+        podman_volumes+=" -v ${kbs_policy_dir}:${kbs_policy_dir}:Z"
+    fi
     podman_volumes+=" -v ${as_work_dir}:${as_work_dir}:Z"
 
     if [[ "${HTTP_MODE}" == "https" ]]; then
@@ -1022,7 +1167,9 @@ mkdir -p $__INTERNAL_trusteeTmpDir
 
 trusteeLibraryLoaded() {
 
-    local PACKAGES=( protobuf protobuf-compiler perl-FindBin perl-IPC-Cmd perl-File-Compare perl-File-Copy tpm2-tss-devel git make tss2-devel openssl beakerlib podman nmap jq)
+    # Keep library-level dependencies aligned with Library/test-helpers/main.fmf.
+    # Individual tests declare build, TPM, and container packages in their own metadata.
+    local PACKAGES=(curl tar openssl)
 
     echo -e "\nInstall packages required by the library when missing."
     rpm -q "${PACKAGES[@]}" || yum -y install "${PACKAGES[@]}"

@@ -1,0 +1,13 @@
+summary: Guest attester URL and TLS configuration errors
+
+description: |
+  Exercise invalid and unreachable KBS endpoints, along with HTTPS CA
+  validation, using sample attestation on standard x86_64 hardware.
+
+discover:
+  how: fmf
+  test:
+    - /Functional/guest-components-attester-config-errors
+
+execute:
+  how: tmt
