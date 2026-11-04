@@ -19,6 +19,6 @@ require:
   - perl-IPC-Cmd
   - perl-File-Compare
   - perl-File-Copy
-duration: 10m
+duration: 30m
 enabled: true
 id: a9de9be5-94a8-4343-8b9b-f09fc78354ec
