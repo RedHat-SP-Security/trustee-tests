@@ -1,0 +1,31 @@
+summary: Resource authorization
+description: |
+    Validate allowed, missing, and policy-denied resource responses from KBS
+    using the RPM-installed trustee-attester on ordinary x86_64 hardware.
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  - trustee-guest-components
+test: ./runtest.sh
+framework: beakerlib
+tag:
+  - CI-Tier-1-guest
+tier: '1'
+require:
+  - trustee-guest-components
+  - podman
+  - openssl
+/http:
+    environment:
+        HTTP_MODE: http
+    id: 0e6aa876-c4d1-43f4-b02f-270b9f9c5db4
+/https:
+    environment:
+        HTTP_MODE: https
+    id: 8c3a6cb7-dcff-4cf0-b4bc-3c5049346a10
+adjust+:
+  - enabled: false
+    when: attester is defined and attester != sample
+    because: This scenario exercises the sample attester
+  - enabled: false
+    when: arch != x86_64
+    continue: false

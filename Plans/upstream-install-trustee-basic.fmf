@@ -5,7 +5,7 @@ discover:
   how: fmf
   test: 
    - /Setup/install_upstream_trustee
-   - /Functional/kbs-basic-attestation
+   - /Functional/trustee-full/kbs-basic-attestation
 
 execute:
     how: tmt

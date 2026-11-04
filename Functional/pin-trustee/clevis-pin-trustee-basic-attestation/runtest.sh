@@ -2,7 +2,7 @@
 # vim: dict=/usr/share/beakerlib/dictionary.vim cpt=.,w,b,u,t,i,k
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
-#   runtest.sh of /Functional/clevis-pin-trustee-basic-attestation
+#   runtest.sh of /Functional/pin-trustee/clevis-pin-trustee-basic-attestation
 #   Description: Basic attestation of clevis-pin-trustee
 #   Author: Adam Prikryl <aprikryl@redhat.com>
 #

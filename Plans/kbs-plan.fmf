@@ -3,7 +3,7 @@ summary: Plan with basic kbs test
 discover:
   how: fmf
   test: 
-   - /Functional/clevis-pin-trustee-basic-attestation
+   - /Functional/pin-trustee/clevis-pin-trustee-basic-attestation
 
 execute:
   how: tmt
@@ -13,4 +13,4 @@ adjust:
     discover:
       how: fmf
       test: 
-         - /Functional/kbs-fake-token-get-resource
+         - /Functional/server/kbs-fake-token-get-resource
