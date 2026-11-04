@@ -10,6 +10,7 @@ tag:
   - CI-Tier-1
 require:
   - trustee-guest-components
+  - cryptsetup
   - tss2
   - tss2-devel
   - tpm2-tss-devel
