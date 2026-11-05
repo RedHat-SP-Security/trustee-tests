@@ -2,7 +2,7 @@
 # vim: dict+=/usr/share/beakerlib/dictionary.vim cpt=.,w,b,u,t,i,k
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #
-#   runtest.sh of trustee-tests/Functional/kbs-fake-token-get-resource
+#   runtest.sh of trustee-tests/Functional/server/kbs-fake-token-get-resource
 #   Description: Tests KBS package with external JWT token validation using a pre-signed static token.
 #   Author: Patrik Koncity <pkoncity@redhat.com>
 #

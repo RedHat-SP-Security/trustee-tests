@@ -17,7 +17,7 @@ provision:
 discover:
   how: fmf
   test:
-    - /Functional/clevis-pin-trustee-basic-attestation
+    - /Functional/pin-trustee/clevis-pin-trustee-basic-attestation
 
 execute:
   how: tmt

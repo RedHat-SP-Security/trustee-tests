@@ -1,0 +1,18 @@
+summary: Package smoke test
+description: |
+    Validate the RPM package contract for trustee-guest-components on ordinary
+    x86_64 hardware without KBS, Clevis, or confidential hardware.
+contact: Patrik Koncity <pkoncity@redhat.com>
+component:
+  - trustee-guest-components
+test: ./runtest.sh
+framework: beakerlib
+tag:
+  - CI-Tier-1-guest
+tier: '1'
+require:
+  - trustee-guest-components
+adjust+:
+  - enabled: false
+    when: arch != x86_64
+    continue: false

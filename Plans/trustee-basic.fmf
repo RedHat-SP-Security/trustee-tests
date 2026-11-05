@@ -8,7 +8,7 @@ discover:
   how: fmf
   test: 
    - /Setup/install_upstream_trustee
-   - /Functional/trustee-basic-attestation
+   - /Functional/trustee-full/trustee-basic-attestation
 
 execute:
     how: tmt
