@@ -9,6 +9,11 @@ description: |
 
   Does not require a confidential VM or real TEE hardware.
 
+adjust:
+  - enabled: false
+    when: distro < rhel-10.2
+    because: clevis-pin-trustee was introduced in RHEL 10.2
+
 provision:
   hardware:
     virtualization:
