@@ -19,6 +19,11 @@ require:
   - perl-IPC-Cmd
   - perl-File-Compare
   - perl-File-Copy
+adjust:
+  - when: distro < rhel-10.3
+    require+:
+      - rust-toolset
+    because: Build KBS with the Rust toolchain provided by each RHEL stream
 duration: 30m
 enabled: true
 id: a9de9be5-94a8-4343-8b9b-f09fc78354ec
