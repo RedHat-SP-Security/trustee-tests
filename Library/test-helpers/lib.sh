@@ -538,13 +538,20 @@ trusteeGetPolicyFile() {
     local policy_name=${1:-"allow_all.rego"}
     local output_path="${__INTERNAL_trusteeTmpDir}/${policy_name}"
 
-    if [ -f "$output_path" ]; then
+    local source_ref_file="${output_path}.ref"
+    local cached_ref=""
+    [ ! -f "$source_ref_file" ] || cached_ref=$(<"$source_ref_file")
+    if [ -f "$output_path" ] && [ "$cached_ref" = "$git_ref" ]; then
         rlLog "Policy file '${policy_name}' for ref '${git_ref}' already exists."
     else
         local policy_url="https://raw.githubusercontent.com/confidential-containers/trustee/${git_ref}/kbs/sample_policies/${policy_name}"
         rlLog "Downloading policy file '${policy_name}' from ref '${git_ref}'..."
-        rlRun "curl -L -f -o \"${output_path}\" \"${policy_url}\"" 0 "Download ${policy_name}"
-        rlAssertExists "${output_path}" "Policy file should have been downloaded"
+        local download_path
+        download_path=$(mktemp "${output_path}.XXXXXX") || return 1
+        rlRun "curl -L -f -o \"${download_path}\" \"${policy_url}\"" 0 "Download ${policy_name}" || { rm -f "$download_path"; return 1; }
+        rm -f -- "$source_ref_file" || { rm -f "$download_path"; return 1; }
+        mv -f -- "$download_path" "$output_path" || { rm -f "$download_path"; return 1; }
+        printf '%s' "$git_ref" > "$source_ref_file" || return 1
     fi
 
     # --- Output The Policy Path ---
@@ -582,13 +589,81 @@ The function's build logic changes based on the TRUSTEE_RPM environment variable
 =item * If TRUSTEE_RPM is set to true, it performs a more advanced check:
     1. It determines the required server commit ID based on the version of the installed trustee-guest-components RPM.
     2. It checks the receipt file to find the currently installed commit ID.
-    3. The build is only performed if the required commit does not match the installed commit.
+    3. The build is performed if the commit or selected DCAP version differs from its receipt.
 
 =back
 
-After a successful build, the function will create or update the receipt file if TRUSTEE_RPM was set to true, ensuring future checks are accurate.
+After a successful build and installation, RPM mode records the commit in kbs_commit_id and the selected DCAP version in kbs_dcap_version. Missing receipts require rebuilding.
 
 =cut
+
+__INTERNAL_trusteeSelectKbsRevision() {
+    __INTERNAL_trusteeRequiredCommit=""
+    __INTERNAL_trusteeDcapVersion=""
+    [ "$TRUSTEE_RPM" = "true" ] || return 0
+
+    local attester_version
+    attester_version=$(rpm -q --qf '%{VERSION}' trustee-guest-components 2>/dev/null | cut -d'^' -f1)
+    if [ -z "$attester_version" ]; then
+        rlFail "TRUSTEE_RPM=true but could not determine version of 'trustee-guest-components'."
+        return 1
+    fi
+    case "$attester_version" in
+        0.10.0) __INTERNAL_trusteeRequiredCommit="c8ca7ca4b8123f4a8a07913161403397a9db594f" ;;
+        0.13.0) __INTERNAL_trusteeRequiredCommit="d9eb5e0cb0aca97abe35b58908e061850ff60a51" ;;
+        *)
+            rlFail "Unknown trustee-guest-components version '$attester_version'."
+            return 1
+            ;;
+    esac
+    __INTERNAL_trusteeDcapVersion="1.23.100.0"
+}
+
+__INTERNAL_trusteeInstallPinnedDcap() {
+    local package file name version quoted_files
+    local -a files=() install_files=()
+    local -A required=(
+        [libsgx-dcap-quote-verify-devel]=1
+	[libsgx-dcap-quote-verify]=1
+        [libsgx-dcap-default-qpl]=1
+	[libsgx-ae-qve]=1
+	[libsgx-headers]=1
+	[libsgx-enclave-common]=1
+	[libsgx-enclave-common-devel]=1
+	[libsgx-urts]=1
+    )
+    local -A found=()
+    files=(./*.rpm)
+
+    for file in "${files[@]}"; do
+        read -r name version < <(rpm -qp --qf '%{NAME} %{VERSION}\n' "$file") || return 1
+        [ -n "${required[$name]:-}" ] || continue
+        if [[ "$name" == libsgx-dcap-* || "$name" == libsgx-ae-qve ]] && [ "$version" != "$__INTERNAL_trusteeDcapVersion" ]; then
+            rlFail "Archive contains $name $version; expected DCAP $__INTERNAL_trusteeDcapVersion."
+            return 1
+        fi
+        found[$name]=1
+        install_files+=("$PWD/${file#./}")
+    done
+
+    for package in "${!required[@]}"; do
+        if [ -z "${found[$package]:-}" ]; then
+            rlFail "DCAP archive is missing required package $package."
+            return 1
+        fi
+    done
+    # Explicit local RPMs select the exact versions on both DNF4 and DNF5,
+    # including downgrades. Keep matching headers and libraries in one transaction.
+    printf -v quoted_files '%q ' "${install_files[@]}"
+    rlRun "dnf --assumeyes install $quoted_files" 0 "Install matching DCAP 1.23 packages" || return 1
+    for package in libsgx-dcap-quote-verify-devel libsgx-dcap-quote-verify libsgx-dcap-default-qpl libsgx-ae-qve; do
+        version=$(rpm -q --qf '%{VERSION}' "$package") || return 1
+        if [ "$version" != "$__INTERNAL_trusteeDcapVersion" ]; then
+            rlFail "$package must be $__INTERNAL_trusteeDcapVersion; found $version."
+            return 1
+        fi
+    done
+}
 
 trusteeBuildAndInstallKBS() {
     # The receipt file is now stored in the trustee-specific temporary directory.
@@ -596,32 +671,20 @@ trusteeBuildAndInstallKBS() {
     local receipt_file="${__INTERNAL_trusteeTmpDir}/kbs_commit_id"
     local rebuild_needed=false
     local reason=""
-    local required_commit_id=""
+    __INTERNAL_trusteeSelectKbsRevision || return 1
+    local required_commit_id="$__INTERNAL_trusteeRequiredCommit"
+    local dcap_receipt_file="${__INTERNAL_trusteeTmpDir}/kbs_dcap_version"
 
     # --- Intelligent Pre-flight Check ---
     if [ "$TRUSTEE_RPM" = "true" ]; then
-        local attester_version
-        attester_version=$(rpm -q --qf '%{VERSION}' trustee-guest-components 2>/dev/null | cut -d'^' -f1)
-
-        if [ -z "$attester_version" ]; then
-            rlFail "TRUSTEE_RPM=true but could not determine version of 'trustee-guest-components' RPM."
-            return 1
-        fi
-
-        case "$attester_version" in
-            "0.10.0") required_commit_id="c8ca7ca4b8123f4a8a07913161403397a9db594f" ;;
-            *)
-                rlFail "Unknown trustee-guest-components version '$attester_version'."
-                return 1
-                ;;
-        esac
-
-        local installed_commit_id=""
+        local installed_commit_id="" installed_dcap_version=""
         [ -f "$receipt_file" ] && installed_commit_id=$(<"$receipt_file")
+        [ ! -f "$dcap_receipt_file" ] || installed_dcap_version=$(<"$dcap_receipt_file")
 
-        if [ "$installed_commit_id" != "$required_commit_id" ]; then
+        if [ "$installed_commit_id" != "$required_commit_id" ] ||
+           [ "$installed_dcap_version" != "$__INTERNAL_trusteeDcapVersion" ]; then
             rebuild_needed=true
-            reason="Required commit (\"$required_commit_id\") does not match installed commit (\"$installed_commit_id\")."
+            reason="Trustee commit or DCAP version does not match the build receipts."
         else
             reason="Correct version (\"$required_commit_id\") is already installed."
         fi
@@ -653,7 +716,7 @@ trusteeBuildAndInstallKBS() {
     local attester_type=${1:-"az-snp-vtpm-attester"}
 
     if [ ! -d "$trustee_dir" ]; then
-        rlRun "git clone \"${repo_url}\" \"${trustee_dir}\"" 0 "Clone Trustee repository"
+        rlRun "git clone \"${repo_url}\" \"${trustee_dir}\"" 0 "Clone Trustee repository" || return 1
     else
         rlLog "Directory '${trustee_dir}' already exists, skipping clone."
     fi
@@ -662,25 +725,28 @@ trusteeBuildAndInstallKBS() {
 
     if [ -n "$required_commit_id" ]; then
         rlLog "Checking out compatible server commit \"${required_commit_id}\"."
-        rlRun "git fetch --all --tags"
-        rlRun "git checkout \"${required_commit_id}\"" 0 "Checkout specific client commit"
+        rlRun "git fetch --all --tags" || { popd; return 1; }
+        rlRun "git checkout \"${required_commit_id}\"" 0 "Checkout specific client commit" || { popd; return 1; }
     else
         rlLog "Building from the current branch."
         # If the main branch is not checked out, do so.
         # This is a safety measure in case the repo was left on a specific commit.
-        rlRun "git checkout main" 0 "Switch to main branch"
-        rlRun "git pull" 0 "Update main branch"
+        rlRun "git checkout main" 0 "Switch to main branch" || { popd; return 1; }
+        rlRun "git pull" 0 "Update main branch" || { popd; return 1; }
     fi
 
-    rlRun "make background-check-kbs" 0 "Run KBS background check"
-    rlRun "make install-kbs" 0 "Install KBS server"
-    rlRun "make cli ATTESTER=\"${attester_type}\"" 0 "Build KBS admin client (Attester: \"${attester_type}\")"
-    rlRun "make install-cli" 0 "Install KBS admin client"
+    # An interrupted or partially installed rebuild must not retain success receipts.
+    rm -f -- "$receipt_file" "$dcap_receipt_file" || { popd; return 1; }
+    rlRun "make background-check-kbs" 0 "Run KBS background check" || { popd; return 1; }
+    rlRun "make install-kbs" 0 "Install KBS server" || { popd; return 1; }
+    rlRun "make cli ATTESTER=\"${attester_type}\"" 0 "Build KBS admin client (Attester: \"${attester_type}\")" || { popd; return 1; }
+    rlRun "make install-cli" 0 "Install KBS admin client" || { popd; return 1; }
 
     if [ -n "$required_commit_id" ]; then
         rlLog "Updating receipt file with commit ID \"${required_commit_id}\"."
-        rlRun "mkdir -p \"${receipt_file%/*}\""
-        rlRun "printf '%s' \"${required_commit_id}\" > \"${receipt_file}\""
+        mkdir -p "${receipt_file%/*}" || { popd; return 1; }
+        printf '%s' "$required_commit_id" > "$receipt_file" || { popd; return 1; }
+        printf '%s' "$__INTERNAL_trusteeDcapVersion" > "$dcap_receipt_file" || { popd; return 1; }
     else
         if [ -f "$receipt_file" ]; then
             rlLog "Clearing old KBS commit receipt file."
@@ -753,7 +819,10 @@ Installs Intel SGX/TDX package dependencies required for the Trustee server.
 
 =item URL (optional)
 
-A custom URL for the SGX RPM repository archive (`.tgz`). If this argument is not provided, the function selects a versioned Intel archive for RHEL 9.2, 9.4, 9.6, 9.8, 10.0, and 10.2. RHEL 10.3 and later 10.x releases fall back to the RHEL 10.2 archive.
+A custom URL for the SGX RPM repository archive (`.tgz`). When TRUSTEE_RPM=true
+selects guest-components 0.10.0 or 0.13.0, the helper uses Intel DCAP 1.23
+packages from the RHEL 9.4 archive on every release, including RHEL 10.3.
+This is because there is no dedicated SGX RPMs for other releases from Intel as of now.
 
 =back
 
@@ -766,8 +835,12 @@ trusteeInstallTDXDeps() {
         local repo_url=${1:-}
         local local_filename="sgx_rpm_local_repo.tgz"
         local extracted_dir="sgx_rpm_local_repo"
+        __INTERNAL_trusteeSelectKbsRevision || return 1
 
-        if [ -z "${repo_url}" ]; then
+        if [ -z "${repo_url}" ] && [ -n "$__INTERNAL_trusteeRequiredCommit" ]; then
+                repo_url="https://download.01.org/intel-sgx/sgx-dcap/1.23/linux/distro/rhel9.4-server/sgx_rpm_local_repo.tgz"
+                rlLog "Using DCAP $__INTERNAL_trusteeDcapVersion for Trustee $__INTERNAL_trusteeRequiredCommit from Intel's RHEL 9.4 archive."
+        elif [ -z "${repo_url}" ]; then
                 local distro_version archive_distro_version sgx_release rhel10_minor
                 distro_version=$(. /etc/os-release && printf '%s:%s' "${ID}" "${VERSION_ID}") || {
                         rlFail "Could not read the RHEL version from /etc/os-release."
@@ -807,10 +880,11 @@ trusteeInstallTDXDeps() {
                 return 1
         fi
         pushd "${extracted_dir}" || return 1
-        rlRun "dnf install -y ./*.rpm" 0 "Install SGX/TDX RPMs" || {
-                popd
-                return 1
-        }
+        if [ -n "$__INTERNAL_trusteeRequiredCommit" ]; then
+                __INTERNAL_trusteeInstallPinnedDcap || { popd; return 1; }
+        else
+                rlRun "dnf install -y ./*.rpm" 0 "Install SGX/TDX RPMs" || { popd; return 1; }
+        fi
         rlRun "rpm -q libsgx-dcap-quote-verify-devel" 0 "Verify SGX DCAP dev package" || {
                 popd
                 return 1
