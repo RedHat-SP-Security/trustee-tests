@@ -610,6 +610,7 @@ trusteeBuildAndInstallKBS() {
 
         case "$attester_version" in
             "0.10.0") required_commit_id="c8ca7ca4b8123f4a8a07913161403397a9db594f" ;;
+            "0.13.0") required_commit_id="d9eb5e0cb0aca97abe35b58908e061850ff60a51" ;;
             *)
                 rlFail "Unknown trustee-guest-components version '$attester_version'."
                 return 1
