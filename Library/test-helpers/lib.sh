@@ -590,10 +590,11 @@ After a successful build, the function will create or update the receipt file if
 
 =cut
 
-trusteeBuildAndInstallKBS() {
+trusteeBuildAndInstallKBS() (
     # The receipt file is now stored in the trustee-specific temporary directory.
     # The variable __INTERNAL_trusteeTmpDir is expected to be set by the parent script.
     local receipt_file="${__INTERNAL_trusteeTmpDir}/kbs_commit_id"
+    local incomplete_file="${__INTERNAL_trusteeTmpDir}/kbs_build_incomplete"
     local rebuild_needed=false
     local reason=""
     local required_commit_id=""
@@ -641,6 +642,11 @@ trusteeBuildAndInstallKBS() {
         fi
     fi
 
+    if [ -f "$incomplete_file" ]; then
+        rebuild_needed=true
+        reason="A previous KBS installation did not finish."
+    fi
+
     if [ "$rebuild_needed" = "false" ]; then
         rlLog "Skipping KBS build: \"$reason\""
         return 0
@@ -653,7 +659,7 @@ trusteeBuildAndInstallKBS() {
     local attester_type=${1:-"az-snp-vtpm-attester"}
 
     if [ ! -d "$trustee_dir" ]; then
-        rlRun "git clone \"${repo_url}\" \"${trustee_dir}\"" 0 "Clone Trustee repository"
+        rlRun "git clone \"${repo_url}\" \"${trustee_dir}\"" 0 "Clone Trustee repository" || return 1
     else
         rlLog "Directory '${trustee_dir}' already exists, skipping clone."
     fi
@@ -662,35 +668,40 @@ trusteeBuildAndInstallKBS() {
 
     if [ -n "$required_commit_id" ]; then
         rlLog "Checking out compatible server commit \"${required_commit_id}\"."
-        rlRun "git fetch --all --tags"
-        rlRun "git checkout \"${required_commit_id}\"" 0 "Checkout specific client commit"
+        rlRun "git fetch --all --tags" || return 1
+        rlRun "git checkout \"${required_commit_id}\"" 0 "Checkout specific server commit" || return 1
     else
         rlLog "Building from the current branch."
         # If the main branch is not checked out, do so.
         # This is a safety measure in case the repo was left on a specific commit.
-        rlRun "git checkout main" 0 "Switch to main branch"
-        rlRun "git pull" 0 "Update main branch"
+        rlRun "git checkout main" 0 "Switch to main branch" || return 1
+        rlRun "git pull" 0 "Update main branch" || return 1
     fi
 
-    rlRun "make background-check-kbs" 0 "Run KBS background check"
-    rlRun "make install-kbs" 0 "Install KBS server"
-    rlRun "make cli ATTESTER=\"${attester_type}\"" 0 "Build KBS admin client (Attester: \"${attester_type}\")"
-    rlRun "make install-cli" 0 "Install KBS admin client"
+    rlLog "Building Trustee revision $(git rev-parse HEAD)"
+    trusteeInstallRust "$required_commit_id" || return 1
+
+    rlRun "make background-check-kbs" 0 "Run KBS background check" || return 1
+    rlRun "make cli ATTESTER=\"${attester_type}\"" 0 "Build KBS admin client (Attester: \"${attester_type}\")" || return 1
+    rlRun "mkdir -p \"${__INTERNAL_trusteeTmpDir}\"" || return 1
+    rlRun "touch \"${incomplete_file}\"" 0 "Mark KBS installation in progress" || return 1
+    rlRun "make install-kbs" 0 "Install KBS server" || return 1
+    rlRun "make install-cli" 0 "Install KBS admin client" || return 1
 
     if [ -n "$required_commit_id" ]; then
         rlLog "Updating receipt file with commit ID \"${required_commit_id}\"."
-        rlRun "mkdir -p \"${receipt_file%/*}\""
-        rlRun "printf '%s' \"${required_commit_id}\" > \"${receipt_file}\""
+        rlRun "mkdir -p \"${receipt_file%/*}\"" || return 1
+        rlRun "printf '%s' \"${required_commit_id}\" > \"${receipt_file}\"" || return 1
     else
         if [ -f "$receipt_file" ]; then
             rlLog "Clearing old KBS commit receipt file."
-            rlRun "rm -f \"${receipt_file}\""
+            rlRun "rm -f \"${receipt_file}\"" || return 1
         fi
     fi
 
-    popd
+    rlRun "rm -f \"${incomplete_file}\"" 0 "Mark KBS installation complete" || return 1
     rlLog "Trustee KBS build and installation complete."
-}
+)
 
 true <<'=cut'
 =pod
@@ -699,43 +710,62 @@ true <<'=cut'
 
 =head2 trusteeInstallRust
 
-Checks for and installs the Rust programming language using the official `rustup` installer.
+Selects Rust for the checked-out Trustee revision. The caller must run this
+function from the Trustee kbs directory inside a subshell.
 
-    trusteeInstallRust
+    trusteeInstallRust [RPM_COMPATIBLE_COMMIT]
 
 =over
 
 =back
 
-This function takes no arguments. It first checks if `rustc` is available in the system's `PATH`. If it is, the function does nothing. If not, it downloads and executes the `rustup-init` script to install Rust non-interactively.
-
-After a successful installation, you will need to **restart your shell** or manually run `source "$HOME/.cargo/env"` for the `PATH` changes to apply to your interactive terminal session.
+For the RPM-compatible revision it uses the RHEL rust-toolset. For upstream,
+it installs rustup in a temporary directory and uses the revision's toolchain
+file. The temporary installation is removed when the build subshell exits.
 
 =cut
 
 trusteeInstallRust() {
-    # First, check if rustc is already in the PATH
-    if command -v rustc &> /dev/null; then
-        # If the command exists, rust is already installed.
-        rlLog "Rust is already installed. Skipping."
-        return 0
-    fi
+    unset RUSTUP_TOOLCHAIN RUSTC CARGO RUSTC_WRAPPER RUSTC_WORKSPACE_WRAPPER
 
-    # If rustc is not found, proceed with installation
-    rlLog "Rust not found. Installing via rustup..."
-    rlRun "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y" 0 "Install Rust"
-
-    # Source the environment file to make rustc/cargo available to the rest of *this script*
-    local cargo_env_path="$HOME/.cargo/env"
-    if [ -f "$cargo_env_path" ]; then
-        source "$cargo_env_path"
-        rlLog "Sourced Rust environment for the current script session."
+    if [ -n "$1" ]; then
+        if ! rpm -q rust-toolset >/dev/null 2>&1; then
+            rlRun "dnf install -y rust-toolset" 0 "Install RHEL Rust toolset" || return 1
+        fi
+        if [ ! -x /usr/bin/rustc ] || [ ! -x /usr/bin/cargo ]; then
+            rlFail "RHEL Rust toolset did not provide /usr/bin/rustc and /usr/bin/cargo."
+            return 1
+        fi
+        export PATH="/usr/bin:/bin:$PATH"
+        export RUSTC=/usr/bin/rustc
+        unset CARGO_HOME RUSTUP_HOME
+        rlLog "Using RHEL Rust toolset for Trustee revision $1."
     else
-        rlLog "ERROR: Rust installation finished, but could not find '$cargo_env_path' to source."
-        return 1
+        if [ ! -f ../rust-toolchain.toml ] && [ ! -f ../rust-toolchain ]; then
+            rlFail "The checked-out Trustee revision has no rust-toolchain file."
+            return 1
+        fi
+
+        local rust_temp_dir cleanup_command
+        rust_temp_dir=$(mktemp -d "${TMPDIR:-/tmp}/trustee-rust.XXXXXXXX") || {
+            rlFail "Could not create a temporary Rust installation directory."
+            return 1
+        }
+        printf -v cleanup_command 'rm -rf -- %q' "$rust_temp_dir"
+        trap "$cleanup_command" EXIT
+        export RUSTUP_HOME="$rust_temp_dir/rustup"
+        export CARGO_HOME="$rust_temp_dir/cargo"
+        export RUSTUP_INIT_SKIP_PATH_CHECK=yes
+
+        rlRun "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs -o \"${rust_temp_dir}/rustup-init.sh\"" 0 "Download rustup installer" || return 1
+        rlRun "sh \"${rust_temp_dir}/rustup-init.sh\" -y --no-modify-path --default-toolchain none --profile minimal" 0 "Install rustup" || return 1
+        export PATH="$CARGO_HOME/bin:$PATH"
+        rlLog "Using the Rust toolchain specified by the checked-out Trustee revision."
     fi
 
-    rlLog "Rust installation complete. Please restart your shell or run 'source \"\$HOME/.cargo/env\"' for the changes to take effect in your terminal."
+    # rustup installs the toolchain specified by the checkout on first use.
+    rlRun "cargo --version" 0 "Check Cargo version" || return 1
+    rlRun "rustc --version" 0 "Check Rust compiler version" || return 1
 }
 
 true <<'=cut'

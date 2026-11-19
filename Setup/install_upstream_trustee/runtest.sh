@@ -9,10 +9,8 @@ rlJournalStart
 
     rlPhaseStartTest "Install trustee and its dependencies"
         rlRun 'rlImport "./test-helpers"' || rlDie "cannot import trustee-tests/test-helpers library"
-        # Install rust
-        trusteeInstallRust
         trusteeInstallTDXDeps || rlDie "Failed to install SGX/TDX build dependencies"
-        trusteeBuildAndInstallKBS
+        trusteeBuildAndInstallKBS || rlDie "Failed to build and install Trustee KBS"
     rlPhaseEnd
 
     rlPhaseStartTest "Test installed binaries"
