@@ -60,7 +60,7 @@ export TRUSTEE_DIR="trustee"
 export TEST_DISK_IMG="test_disk.img"
 export TEST_DISK_DEV="/dev/loop0"
 # For Azure SEV-SNP VMs, this is the correct attester
-export ATTESTER_TYPE="az-snp-vtpm-attester"
+export ATTESTER_TYPE="${ATTESTER_TYPE:-az-snp-vtpm-attester}"
 
 # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 #   Functions
@@ -139,6 +139,48 @@ trusteeCreateKbsConfig() {
     rlRun "mkdir -p \"${output_dir}\"" 0 "Create config directory"
     rlLog "Generating KBS config file for ${mode} mode at '${output_file}'..."
 
+    # Newer KBS releases use bearer JWTs and unified resource storage.
+    if trusteeUsesAdminToken; then
+        cat > "${output_file}" <<EOF
+[http_server]
+${http_server_settings}
+sockets = ["${server_ip}:${server_port}"]
+
+[attestation_token]
+insecure_header_jwk = true
+
+[attestation_service]
+type = "coco_as_builtin"
+
+[attestation_service.attestation_token_broker]
+duration_min = 5
+
+[attestation_service.rvps_config]
+type = "BuiltIn"
+
+[admin]
+authorization_mode = "AuthenticatedAuthorization"
+
+[admin.authentication.bearer_jwt]
+identity_providers = [{ issuer = "trustee-tests", public_key_uri = "$(pwd)/AdminKeys/public.pub" }]
+
+[admin.authorization.regex_acl]
+acls = [{ role = "admin", allowed_endpoints = "^/kbs/.+$" }]
+
+[storage_backend]
+storage_type = "LocalFs"
+
+[storage_backend.backends.local_fs]
+dir_path = "${__INTERNAL_trusteeTmpDir}/storage"
+
+[[plugins]]
+name = "resource"
+storage_backend_type = "kvstorage"
+EOF
+        rlLog "KBS config file created successfully."
+        return 0
+    fi
+
     # --- Create Config File ---
     # Use a Here Document to write the file content.
     cat > "${output_file}" <<EOF
@@ -176,6 +218,25 @@ EOF
 
     rlLog "KBS config file created successfully."
 }
+
+# Detect the installed client interface so pinned older builds keep their setup.
+trusteeUsesAdminToken() {
+    /usr/local/bin/kbs-client config --help 2>/dev/null | grep -q -- '--admin-token-file'
+}
+
+trusteeGenerateAdminToken() (
+    set -o pipefail
+    local header payload input signature now signing_file
+    now=$(date +%s) || return 1
+    header=$(printf '%s' '{"alg":"EdDSA","typ":"JWT"}' | openssl base64 -A | tr '+/' '-_' | tr -d '=') || return 1
+    payload=$(printf '{"iss":"trustee-tests","sub":"admin","role":"admin","iat":%s,"exp":%s}' "$now" "$((now + 3600))" | openssl base64 -A | tr '+/' '-_' | tr -d '=') || return 1
+    signing_file=$(mktemp "${__INTERNAL_trusteeTmpDir}/admin-signing.XXXXXX") || return 1
+    input="${header}.${payload}"
+    printf '%s' "$input" > "$signing_file"
+    signature=$(openssl pkeyutl -sign -inkey AdminKeys/private.key -rawin -in "$signing_file" | openssl base64 -A | tr '+/' '-_' | tr -d '=') || { rm -f "$signing_file"; return 1; }
+    rm -f "$signing_file"
+    (umask 077; printf '%s.%s\n' "$input" "$signature" > AdminKeys/admin-token)
+)
 
 true <<'=cut'
 =pod
@@ -298,6 +359,8 @@ trusteeCreateMountScript() {
     fi
 
     local tee_key_arg="--tee-key-file \"TeeKeys/tee_key.pem\""
+    local require_hardware=true
+    [ "${ATTESTER_TYPE:-az-snp-vtpm-attester}" = sample ] && require_hardware=false
     local script_path="${__INTERNAL_trusteeTmpDir}/mount-luks-disk.sh"
 
     rlLog "Creating LUKS mount script at '${script_path}'..."
@@ -306,7 +369,7 @@ trusteeCreateMountScript() {
     # The 'attest' command is now hardcoded.
 cat > "${script_path}" <<-EOF
 		#!/bin/bash
-		set -e
+		set -eo pipefail
 		echo "--> Finding disk with UUID ${data_disk_uuid}..."
 		disk=\$(blkid | grep "${data_disk_uuid}" | awk -F ': ' '{print \$1}')
 		if [ -z "\$disk" ]; then
@@ -314,7 +377,19 @@ cat > "${script_path}" <<-EOF
 		    exit 1
 		fi
 		echo "--> Attesting to KBS to get resource token using /usr/local/bin/kbs-client..."
-		/usr/local/bin/kbs-client --url "${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}" ${HTTPS_CERTS} attest ${tee_key_arg} > /tmp/attestation_token
+		attester_log=\$(mktemp)
+		if ! /usr/local/bin/kbs-client --url "${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}" ${HTTPS_CERTS} attest ${tee_key_arg} > /tmp/attestation_token 2> "\$attester_log"; then
+		    cat "\$attester_log" >&2
+		    rm -f "\$attester_log"
+		    exit 1
+		fi
+		cat "\$attester_log" >&2
+		if ${require_hardware} && grep -qi 'sample attester will be used' "\$attester_log"; then
+		    echo 'Hardware attestation required, but the client selected sample evidence.' >&2
+		    rm -f "\$attester_log"
+		    exit 1
+		fi
+		rm -f "\$attester_log"
 		echo "--> Using token to get LUKS key from KBS using ${get_resource_tool}..."
 		${get_resource_tool} --url "${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT}" ${HTTPS_CERTS} get-resource --path default/test/luks-key | base64 -d > /tmp/luks-key
 		echo "--> Unlocking and mounting LUKS disk..."
@@ -526,7 +601,10 @@ trusteeGetPolicyFile() {
     local git_ref="main" # Default to 'main'
 
     # Determine which version is INSTALLED based on the receipt file
-    if [ -f "$receipt_file" ]; then
+    if [ -f "${__INTERNAL_trusteeTmpDir}/kbs_source_revision" ]; then
+        git_ref=$(<"${__INTERNAL_trusteeTmpDir}/kbs_source_revision")
+        rlLog "Using policy from built Trustee revision ${git_ref}."
+    elif [ -f "$receipt_file" ]; then
         # A receipt exists, so a specific commit is installed. Use it.
         git_ref=$(<"$receipt_file")
         rlLog "Receipt file found. Will download policy for commit ${git_ref}."
@@ -574,7 +652,8 @@ Performs an intelligent check to see if the Key Broker Service (KBS) needs to be
 
 =item ATTESTER_TYPE (optional)
 
-The attester type to use when building the admin client. Defaults to tdx.
+The attester type used to build the client. Defaults to ATTESTER_TYPE, or
+az-snp-vtpm-attester if it is unset. Set it to sample for sample-only builds.
 
 =back
 
@@ -703,6 +782,13 @@ trusteeBuildAndInstallKBS() (
     __INTERNAL_trusteeSelectKbsRevision || return 1
     local required_commit_id="$__INTERNAL_trusteeRequiredCommit"
     local dcap_receipt_file="${__INTERNAL_trusteeTmpDir}/kbs_dcap_version"
+    local source_receipt_file="${__INTERNAL_trusteeTmpDir}/kbs_source_revision"
+    local attester_type=${1:-${ATTESTER_TYPE:-az-snp-vtpm-attester}}
+    local attester_receipt_file="${__INTERNAL_trusteeTmpDir}/kbs_attester_type"
+    case "$attester_type" in
+        sample|az-snp-vtpm-attester|snp-attester|tdx-attester) ;;
+        *) rlFail "Unsupported client attester: $attester_type"; return 1 ;;
+    esac
 
     # --- Intelligent Pre-flight Check ---
     if [ "$TRUSTEE_RPM" = "true" ]; then
@@ -738,6 +824,11 @@ trusteeBuildAndInstallKBS() (
         reason="A previous KBS installation did not finish."
     fi
 
+    if [ ! -f "$attester_receipt_file" ] || [ "$(<"$attester_receipt_file")" != "$attester_type" ]; then
+        rebuild_needed=true
+        reason="Client attester does not match the build receipt."
+    fi
+
     if [ "$rebuild_needed" = "false" ]; then
         rlLog "Skipping KBS build: \"$reason\""
         return 0
@@ -747,7 +838,6 @@ trusteeBuildAndInstallKBS() (
 
     local repo_url="https://github.com/confidential-containers/trustee.git"
     local trustee_dir="trustee"
-    local attester_type=${1:-"az-snp-vtpm-attester"}
 
     if [ ! -d "$trustee_dir" ]; then
         rlRun "git clone \"${repo_url}\" \"${trustee_dir}\"" 0 "Clone Trustee repository" || return 1
@@ -769,7 +859,9 @@ trusteeBuildAndInstallKBS() (
         rlRun "git pull" 0 "Update main branch" || return 1
     fi
 
-    rlLog "Building Trustee revision $(git rev-parse HEAD)"
+    local source_revision
+    source_revision=$(git rev-parse HEAD) || return 1
+    rlLog "Building Trustee revision ${source_revision}"
     trusteeInstallRust "$required_commit_id" || return 1
     if [ -z "$required_commit_id" ]; then
         __INTERNAL_trusteeInstallNvat || return 1
@@ -777,9 +869,13 @@ trusteeBuildAndInstallKBS() (
 
     rlRun "mkdir -p \"${__INTERNAL_trusteeTmpDir}\"" || return 1
     rlRun "touch \"${incomplete_file}\"" 0 "Mark KBS installation in progress" || return 1
-    rm -f -- "$receipt_file" "$dcap_receipt_file" || return 1
+    rm -f -- "$receipt_file" "$dcap_receipt_file" "$attester_receipt_file" "$source_receipt_file" || return 1
     rlRun "make background-check-kbs" 0 "Run KBS background check" || return 1
-    rlRun "make cli ATTESTER=\"${attester_type}\"" 0 "Build KBS admin client (Attester: \"${attester_type}\")" || return 1
+    if [ "$attester_type" = sample ]; then
+        rlRun "make cli CLI_FEATURES=sample_only" 0 "Build sample-only KBS client" || return 1
+    else
+        rlRun "make cli ATTESTER=\"${attester_type}\"" 0 "Build KBS client (Attester: \"${attester_type}\")" || return 1
+    fi
     rlRun "make install-kbs" 0 "Install KBS server" || return 1
     rlRun "make install-cli" 0 "Install KBS admin client" || return 1
 
@@ -795,6 +891,8 @@ trusteeBuildAndInstallKBS() (
         fi
     fi
 
+    printf '%s' "$attester_type" > "$attester_receipt_file" || return 1
+    printf '%s' "$source_revision" > "$source_receipt_file" || return 1
     rlRun "rm -f \"${incomplete_file}\"" 0 "Mark KBS installation complete" || return 1
     rlLog "Trustee KBS build and installation complete."
 )
@@ -1001,8 +1099,23 @@ trusteeStartKbsServer() {
     KBS_PID=$!
     # Give the server a moment to start up.
     rlRun "sleep 4" 0 "Wait for KBS to initialize"
-    rlAssertExists "/proc/${KBS_PID}" "KBS server process (PID ${KBS_PID}) should be running"
+    if ! kill -0 "$KBS_PID" 2>/dev/null; then
+        rlFail "KBS failed to start; server log follows."
+        cat "$log_file"
+        return 1
+    fi
     rlLog "KBS server started successfully with PID ${KBS_PID}."
+}
+
+trusteeSaveKbsLog() {
+    local log_file="${__INTERNAL_trusteeTmpDir}/kbs.log"
+    if [ -f "$log_file" ] && [ -n "${TMT_TEST_DATA:-}" ]; then
+        if command -v tmt-file-submit >/dev/null 2>&1; then
+            tmt-file-submit "$log_file"
+        else
+            mkdir -p "$TMT_TEST_DATA" && cp "$log_file" "${TMT_TEST_DATA}/kbs.log"
+        fi
+    fi
 }
 
 true <<'=cut'

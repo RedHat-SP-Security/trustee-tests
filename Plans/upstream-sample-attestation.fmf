@@ -1,0 +1,16 @@
+summary: Upstream KBS and LUKS workflow using sample attestation
+description: |
+    Exercises the upstream KBS workflow with sample evidence. This does not
+    verify confidential guest hardware or the packaged trustee-attester.
+
+environment:
+    ATTESTER_TYPE: sample
+
+discover:
+    how: fmf
+    test:
+      - /Setup/install_upstream_trustee
+      - /Functional/kbs-basic-attestation
+
+execute:
+    how: tmt

@@ -9,18 +9,26 @@ rlJournalStart
 
     rlPhaseStartSetup "Configure and start Trustee KBS on localhost"
         rlRun 'rlImport "./test-helpers"' || rlDie "cannot import trustee-tests/test-helpers library"
+        rm -f "${__INTERNAL_trusteeTmpDir}/kbs.log"
+        trap trusteeSaveKbsLog EXIT
         if [[ "$HTTP_MODE" == "https" ]]; then
             HTTPS_CERTS="--cert-file ${PWD}/HttpsCerts/host.crt"
             trusteeGenerateHTTPCerts
         fi
         # Generate admin keys
         trusteeGenerateAdminKeys
+        if trusteeUsesAdminToken; then
+            trusteeGenerateAdminToken || rlDie "Failed to generate KBS admin token"
+            ADMIN_AUTH="--admin-token-file AdminKeys/admin-token"
+        else
+            ADMIN_AUTH="--auth-private-key AdminKeys/private.key"
+        fi
         trusteeGenerateTeeKey
-        trusteeCreateKbsConfig $HTTP_MODE
-        trusteeStartKbsServer
+        trusteeCreateKbsConfig "$HTTP_MODE" || rlDie "Failed to create KBS configuration"
+        trusteeStartKbsServer || rlDie "Failed to start KBS"
         rlRun "sleep 5"
-        trusteeGetPolicyFile "allow_all.rego"
-        rlRun "/usr/local/bin/kbs-client --url ${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config --auth-private-key AdminKeys/private.key set-resource-policy --policy-file ${__INTERNAL_trusteeTmpDir}/allow_all.rego"
+        trusteeGetPolicyFile "allow_all.rego" || rlDie "Failed to obtain resource policy"
+        rlRun "/usr/local/bin/kbs-client --url ${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config ${ADMIN_AUTH} set-resource-policy --policy-file ${__INTERNAL_trusteeTmpDir}/allow_all.rego" || rlDie "Failed to configure KBS resource policy"
     rlPhaseEnd
 
     # =================================================================
@@ -29,7 +37,7 @@ rlJournalStart
     rlPhaseStartTest "Test 1: Create and mount an encrypted LUKS disk"
         trusteeCreateLuksTestDisk
         # Push the luks-key to the KBS server using the admin kbs-client
-        rlRun "/usr/local/bin/kbs-client --url $HTTP_MODE://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config --auth-private-key AdminKeys/private.key set-resource --resource-file ./luks-key --path default/test/luks-key"
+        rlRun "/usr/local/bin/kbs-client --url $HTTP_MODE://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config ${ADMIN_AUTH} set-resource --resource-file ./luks-key --path default/test/luks-key"
         # Create the auto-mount script using the official trustee-attester
         DATA_DISK_UUID=$(blkid -s UUID -o value ${TEST_DISK_DEV})
         # Create the auto-mount script using the kbs-client

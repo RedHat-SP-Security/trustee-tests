@@ -9,6 +9,8 @@ rlJournalStart
 
     rlPhaseStartSetup "Configure and start Trustee KBS on localhost"
         rlRun 'rlImport "./test-helpers"' || rlDie "cannot import trustee-tests/test-helpers library"
+        rm -f "${__INTERNAL_trusteeTmpDir}/kbs.log"
+        trap trusteeSaveKbsLog EXIT
         if [[ "$HTTP_MODE" == "https" ]]; then
             HTTPS_CERTS="--cert-file ${PWD}/HttpsCerts/host.crt"
             trusteeGenerateHTTPCerts
@@ -17,7 +19,7 @@ rlJournalStart
         trusteeGenerateAdminKeys
         trusteeGenerateTeeKey
         trusteeCreateKbsConfig $HTTP_MODE
-        trusteeStartKbsServer
+        trusteeStartKbsServer || rlDie "Failed to start KBS"
         rlRun "sleep 5"
         trusteeGetPolicyFile "allow_all.rego"
         rlRun "/usr/local/bin/kbs-client --url ${HTTP_MODE}://${SERVER_CN}:${SERVER_PORT} ${HTTPS_CERTS} config --auth-private-key AdminKeys/private.key set-resource-policy --policy-file ${__INTERNAL_trusteeTmpDir}/allow_all.rego"
