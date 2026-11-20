@@ -665,6 +665,34 @@ __INTERNAL_trusteeInstallPinnedDcap() {
     done
 }
 
+__INTERNAL_trusteeInstallNvat() {
+    local distro_version arch package_version base_url
+    distro_version=$(. /etc/os-release && printf '%s:%s' "$ID" "$VERSION_ID") || {
+        rlFail "Could not read the RHEL version from /etc/os-release."
+        return 1
+    }
+    arch=$(uname -m) || return 1
+
+    # The pinned SDK is needed by the upstream x86_64 build. RPM-compatible
+    # Trustee revisions are handled separately by the caller.
+    case "$distro_version:$arch" in
+        rhel:9.*:x86_64) base_url="https://developer.download.nvidia.com/compute/cuda/repos/rhel9/x86_64" ;;
+        rhel:10.*:x86_64) base_url="https://developer.download.nvidia.com/compute/cuda/repos/rhel10/x86_64" ;;
+        *) return 0 ;;
+    esac
+
+    package_version="2.0.0.1790976895-1"
+    if ! rpm -q "libnvat-${package_version}" "libnvat-devel-${package_version}" >/dev/null 2>&1; then
+        rlRun "dnf install -y ${base_url}/libnvat-${package_version}.x86_64.rpm ${base_url}/libnvat-devel-${package_version}.x86_64.rpm" 0 "Install NVIDIA attestation SDK" || return 1
+    fi
+    if [ ! -f /usr/include/nvat.h ] || [ ! -e /usr/lib64/libnvat.so ]; then
+        rlFail "NVIDIA attestation SDK header or library is missing."
+        return 1
+    fi
+    export NVAT_USE_SYSTEM_LIB=1
+    rlLog "Using NVIDIA attestation SDK ${package_version} from system packages."
+}
+
 trusteeBuildAndInstallKBS() (
     # The receipt file is now stored in the trustee-specific temporary directory.
     # The variable __INTERNAL_trusteeTmpDir is expected to be set by the parent script.
@@ -743,6 +771,9 @@ trusteeBuildAndInstallKBS() (
 
     rlLog "Building Trustee revision $(git rev-parse HEAD)"
     trusteeInstallRust "$required_commit_id" || return 1
+    if [ -z "$required_commit_id" ]; then
+        __INTERNAL_trusteeInstallNvat || return 1
+    fi
 
     rlRun "mkdir -p \"${__INTERNAL_trusteeTmpDir}\"" || return 1
     rlRun "touch \"${incomplete_file}\"" 0 "Mark KBS installation in progress" || return 1
