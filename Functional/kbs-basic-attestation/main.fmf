@@ -9,6 +9,7 @@ framework: beakerlib
 tag:
   - CI-Tier-1
 require:
+  - cryptsetup
   - tss2
   - tss2-devel
   - tpm2-tss-devel
