@@ -19,6 +19,7 @@ require:
   - perl-IPC-Cmd
   - perl-File-Compare
   - perl-File-Copy
+  - perl-Time-Piece
 adjust:
   - when: distro < rhel-10.3
     require+:
